@@ -1,6 +1,6 @@
 # Voice Loop
 
-A minimal on-device voice agent loop. Runs entirely on Mac M4 / Apple Silicon.
+A minimal on-device voice agent loop. Runs entirely on macOS (Apple Silicon) and Linux (NVIDIA CUDA).
 
 > Need a custom voice model or production voice agent? See [Trelis Voice AI Services](https://trelis.com/voice-ai-services/).
 
@@ -15,15 +15,26 @@ A minimal on-device voice agent loop. Runs entirely on Mac M4 / Apple Silicon.
 ## Stack
 
 - **Moonshine** (CPU) for speech-to-text transcription
-- **Gemma 4 E4B** (MLX/Metal) for response generation
+- **Gemma 4 E4B** (MLX/Metal on macOS, llama.cpp/CUDA on Linux) for response generation
 - **Kokoro** (CPU) for TTS (streaming)
 - **Silero VAD** + **Smart Turn v3** for turn detection
 - **WebRTC AEC3** (via LiveKit APM) for voice interruption
 
 ## Setup
 
+### macOS (Apple Silicon)
+
 ```bash
 brew install portaudio espeak-ng uv
+git clone https://github.com/TrelisResearch/voice-loop.git
+cd voice-loop
+uv sync
+```
+
+### Arch Linux (NVIDIA CUDA, VRAM ≥ 4 GB)
+
+```bash
+pacman -S portaudio espeak-ng cuda nvidia uv
 git clone https://github.com/TrelisResearch/voice-loop.git
 cd voice-loop
 uv sync
@@ -35,31 +46,31 @@ First run downloads Gemma 4 E4B (~3GB), Moonshine (~250MB), Kokoro (~300MB).
 
 ```bash
 # Recommended defaults (TTS + smart turn + voice interrupt all on)
-uv run voice_loop_mac.py
+uv run voice_loop.py
 
 # + chime on utterance + soft ticks while generating
-uv run voice_loop_mac.py --chime
+uv run voice_loop.py --chime
 
 # + persistent memory (reads/writes MEMORY.md)
-uv run voice_loop_mac.py --memory
+uv run voice_loop.py --memory
 
 # Text-only mode (no TTS)
-uv run voice_loop_mac.py --no-tts
+uv run voice_loop.py --no-tts
 
 # Disable voice interruption (keypress only)
-uv run voice_loop_mac.py --no-aec
+uv run voice_loop.py --no-aec
 
 # Different voice (see below)
-uv run voice_loop_mac.py --voice bf_emma
+uv run voice_loop.py --voice bf_emma
 
 # Use the smaller E2B model (faster, slightly lower quality)
-uv run voice_loop_mac.py --model mlx-community/gemma-4-E2B-it-4bit
+uv run voice_loop.py --model gemma-4-e2b
 
 # Custom silence timeout
-uv run voice_loop_mac.py --silence-ms 500
+uv run voice_loop.py --silence-ms 500
 
 # Debug: record mic stream to a WAV
-uv run voice_loop_mac.py --record
+uv run voice_loop.py --record
 ```
 
 ## Recommended Kokoro voices
@@ -108,7 +119,7 @@ Both files are re-read at the start of every turn, so edits take effect immediat
 
 ## Memory usage
 
-~3.5 GB total. Fits easily in 16GB.
+~3.5 GB total (macOS), ~3 GB VRAM + ~3 GB RAM (Linux with CUDA).
 
 ## Credits
 
@@ -118,7 +129,8 @@ Built with:
 - [Silero VAD](https://github.com/snakers4/silero-vad) — voice activity detection
 - [Smart Turn v3](https://github.com/pipecat-ai/smart-turn) — end-of-turn detection
 - [LiveKit APM](https://github.com/livekit/python-sdks) — WebRTC AEC3
-- [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) — MLX multimodal inference
+- [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) — MLX multimodal inference (macOS)
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) — CUDA inference (Linux)
 - [Gemma 4](https://huggingface.co/google/gemma-4-E4B-it) — LLM
 
 ## License

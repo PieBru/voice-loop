@@ -1,0 +1,19 @@
+models:
+  gemma-4-e4b:
+    darwin:
+      repo: mlx-community/gemma-4-E4B-it-4bit
+    linux:
+      api_base: http://localhost:8088/v1
+      model: Gemma4-E4B
+  gemma-4-26b:
+    darwin:
+      repo: mlx-community/gemma-4-E4B-it-4bit
+    linux:
+      api_base: http://localhost:8088/v1
+      model: Gemma4-26B
+  gemma-4-e2b:
+    darwin:
+      repo: mlx-community/gemma-4-E2B-it-4bit
+    linux:
+      api_base: http://localhost:8088/v1
+      model: Gemma4-E4B

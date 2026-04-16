@@ -1,37 +1,45 @@
 #!/usr/bin/env python3
-"""Voice Loop — a minimal on-device voice agent. Mac M4 / Apple Silicon.
+"""Voice Loop — a minimal on-device voice agent.
 
-Moonshine (CPU) transcribes speech. Gemma 4 E4B (Metal) responds.
-Kokoro TTS speaks the response. WebRTC AEC3 enables voice interrupt.
+macOS (Apple Silicon): Moonshine (CPU) transcribes, Gemma 4 E4B (Metal)
+responds, Kokoro TTS speaks, WebRTC AEC3 enables voice interrupt.
+Linux (NVIDIA CUDA): Same pipeline via llama.cpp server (OpenAI-compatible API).
 
 Usage:
-    uv run voice_loop_mac.py                        # defaults (TTS + smart turn + AEC)
-    uv run voice_loop_mac.py --no-tts               # text out only
-    uv run voice_loop_mac.py --no-aec               # keypress interrupt only
-    uv run voice_loop_mac.py --chime-loop           # chime + ticks while generating
+    uv run voice_loop.py                        # defaults (TTS + smart turn + AEC)
+    uv run voice_loop.py --no-tts               # text out only
+    uv run voice_loop.py --no-aec               # keypress interrupt only
+    uv run voice_loop.py --chime                # chime + ticks while generating
+    uv run voice_loop.py --memory               # persistent memory (MEMORY.md)
 """
 
 import argparse
 import asyncio
+import ctypes.util
+import json
 import os
 import queue
 import select
+import subprocess
 import sys
 import tempfile
 import termios
 import time as _time
 import tty
+import urllib.error
+import urllib.request
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
-# Larger audio buffer via 'high' latency → more robust to MLX CPU saturation.
-# NB: don't set sd.default.blocksize globally — a large blocksize on the TTS
-# output stream introduces a mic-to-reference delay that misaligns AEC.
-sd.default.latency = 'high'
+
+sd.default.latency = "high"
 import torch
+
+IS_DARWIN = sys.platform == "darwin"
+IS_LINUX = sys.platform == "linux"
 
 SAMPLE_RATE = 16000
 CHUNK_SAMPLES = 512  # 32ms at 16kHz (required by Silero VAD)
@@ -53,39 +61,52 @@ def _fade_tone(freq, dur, amp=0.6):
     env = 0.5 * (1 - np.cos(2 * np.pi * np.arange(n) / (n - 1)))
     return amp * np.sin(2 * np.pi * freq * t) * env
 
+
 def _silence(dur):
     return np.zeros(int(dur * CHIME_SR), dtype=np.float32)
 
+
 def make_chime(duration=30.0, tick_every=1.5):
     """Two-tone chime + periodic short ticks. Single buffer → one sd.play()."""
-    head = np.concatenate([_fade_tone(880, 0.09), _silence(0.03), _fade_tone(1320, 0.10)])
+    head = np.concatenate(
+        [_fade_tone(880, 0.09), _silence(0.03), _fade_tone(1320, 0.10)]
+    )
     # Short soft click-style tick (shorter and quieter than a beep)
     tick = _fade_tone(550, 0.04, amp=0.18)
     total = int(duration * CHIME_SR)
     buf = np.zeros(total, dtype=np.float32)
-    buf[:len(head)] = head
+    buf[: len(head)] = head
     step = int(tick_every * CHIME_SR)
     for pos in range(len(head), total, step):
         end = min(pos + len(tick), total)
-        buf[pos:end] = tick[:end - pos]
+        buf[pos:end] = tick[: end - pos]
     return buf
+
 
 def _lang_from_voice(v: str) -> str:
     """Infer Kokoro lang code from voice prefix.
     a* = US English, b* = UK English, e* = Spanish, f* = French,
     h* = Hindi, i* = Italian, j* = Japanese, p* = Portuguese, z* = Chinese."""
-    prefix = v[:1] if len(v) > 1 and v[1] == '_' else ''
+    prefix = v[:1] if len(v) > 1 and v[1] == "_" else ""
     return {
-        'a': 'en-us', 'b': 'en-gb',
-        'e': 'es', 'f': 'fr-fr', 'h': 'hi',
-        'i': 'it', 'j': 'ja', 'p': 'pt-br', 'z': 'cmn',
-    }.get(prefix, 'en-us')
+        "a": "en-us",
+        "b": "en-gb",
+        "e": "es",
+        "f": "fr-fr",
+        "h": "hi",
+        "i": "it",
+        "j": "ja",
+        "p": "pt-br",
+        "z": "cmn",
+    }.get(prefix, "en-us")
 
 
 def save_wav(audio, sr=SAMPLE_RATE):
     path = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
     with wave.open(path, "wb") as wf:
-        wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sr)
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
         wf.writeframes((audio * 32767).clip(-32768, 32767).astype(np.int16).tobytes())
     return path
 
@@ -93,13 +114,19 @@ def save_wav(audio, sr=SAMPLE_RATE):
 def load_smart_turn():
     import onnxruntime as ort
     from transformers import WhisperFeatureExtractor
-    model_path = os.path.join(tempfile.gettempdir(), "smart_turn_v3", "smart_turn_v3.2_cpu.onnx")
+
+    model_path = os.path.join(
+        tempfile.gettempdir(), "smart_turn_v3", "smart_turn_v3.2_cpu.onnx"
+    )
     if not os.path.exists(model_path):
         print("Downloading Smart Turn v3.2 model...", flush=True)
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         import urllib.request
+
         urllib.request.urlretrieve(
-            "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx", model_path)
+            "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx",
+            model_path,
+        )
     session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
     extractor = WhisperFeatureExtractor.from_pretrained("openai/whisper-tiny")
 
@@ -107,40 +134,146 @@ def load_smart_turn():
         max_samples = 8 * SAMPLE_RATE
         audio_float32 = audio_float32[-max_samples:]
         features = extractor(
-            audio_float32, sampling_rate=SAMPLE_RATE, max_length=max_samples,
-            padding="max_length", return_attention_mask=False, return_tensors="np",
+            audio_float32,
+            sampling_rate=SAMPLE_RATE,
+            max_length=max_samples,
+            padding="max_length",
+            return_attention_mask=False,
+            return_tensors="np",
         )
-        return float(session.run(None, {"input_features": features.input_features.astype(np.float32)})[0].flatten()[0])
+        return float(
+            session.run(
+                None, {"input_features": features.input_features.astype(np.float32)}
+            )[0].flatten()[0]
+        )
+
     return predict
+
 
 def _vad_prob(vad, chunk):
     p = vad(torch.from_numpy(chunk), SAMPLE_RATE)
     return p.item() if hasattr(p, "item") else p
 
+
 def _get_ref_segment(tts_concat, pos, length):
     if pos >= len(tts_concat):
         return np.zeros(length, dtype=np.float32)
-    seg = tts_concat[pos:pos + length]
-    return np.concatenate([seg, np.zeros(length - len(seg), dtype=np.float32)]) if len(seg) < length else seg
+    seg = tts_concat[pos : pos + length]
+    return (
+        np.concatenate([seg, np.zeros(length - len(seg), dtype=np.float32)])
+        if len(seg) < length
+        else seg
+    )
+
+
+_DEFAULT_ALIASES = {
+    "gemma-4-e4b": {
+        "darwin": {"repo": "mlx-community/gemma-4-E4B-it-4bit"},
+        "linux": {"api_base": "http://localhost:8088/v1", "model": "Gemma4-E4B"},
+    },
+    "gemma-4-26b": {
+        "darwin": {"repo": "mlx-community/gemma-4-E4B-it-4bit"},
+        "linux": {"api_base": "http://localhost:8088/v1", "model": "Gemma4-26B"},
+    },
+    "gemma-4-e2b": {
+        "darwin": {"repo": "mlx-community/gemma-4-E2B-it-4bit"},
+        "linux": {"api_base": "http://localhost:8088/v1", "model": "Gemma4-E4B"},
+    },
+}
+
+
+def load_model_aliases(config_path=None):
+    path = Path(config_path) if config_path else _DIR / "config.yaml"
+    if path.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(path.read_text())
+            if data and "models" in data:
+                return data["models"]
+        except Exception:
+            pass
+    return _DEFAULT_ALIASES
+
+
+def resolve_model(alias, platform_name):
+    aliases = load_model_aliases()
+    if alias in aliases:
+        entry = aliases[alias].get(platform_name)
+        if not entry:
+            print(
+                f"Error: Model '{alias}' is not available on {platform_name}. "
+                "Use a different model or alias."
+            )
+            sys.exit(1)
+        return entry
+    return None
+
+
+def check_linux_deps():
+    try:
+        import sounddevice
+    except ImportError:
+        print("Error: PortAudio not found. Install with: pacman -S portaudio")
+        sys.exit(1)
+    lib = ctypes.util.find_library("espeak-ng")
+    if not lib and IS_DARWIN:
+        try:
+            subprocess.check_output(["brew", "--prefix", "espeak-ng"], text=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            print("Error: espeak-ng not found. Install with: brew install espeak-ng")
+            sys.exit(1)
+    elif not lib:
+        print("Error: espeak-ng not found. Install with: pacman -S espeak-ng")
+        sys.exit(1)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Voice Loop — a minimal on-device voice agent (Mac)")
+    ap = argparse.ArgumentParser(
+        description="Voice Loop — a minimal on-device voice agent"
+    )
     B = argparse.BooleanOptionalAction
     ap.add_argument("--tts", action=B, default=True, help="Kokoro TTS output")
-    ap.add_argument("--smart-turn", action=B, default=True, help="Smart Turn v3 endpoint detection")
+    ap.add_argument(
+        "--smart-turn", action=B, default=True, help="Smart Turn v3 endpoint detection"
+    )
     ap.add_argument("--aec", action=B, default=True, help="WebRTC AEC3 voice interrupt")
-    ap.add_argument("--chime", action=B, default=True,
-                    help="Chime on utterance + soft ticks while generating (default: on)")
-    ap.add_argument("--memory", action="store_true",
-                    help="Read/write MEMORY.md (auto-update durable facts, consolidate every 5 turns)")
-    ap.add_argument("--audio-mode", action="store_true", help="Send audio directly to Gemma (experimental)")
-    ap.add_argument("--model", default="mlx-community/gemma-4-E4B-it-4bit")
+    ap.add_argument(
+        "--chime",
+        action=B,
+        default=True,
+        help="Chime on utterance + soft ticks while generating (default: on)",
+    )
+    ap.add_argument(
+        "--memory",
+        action="store_true",
+        help="Read/write MEMORY.md (auto-update durable facts, consolidate every 5 turns)",
+    )
+    ap.add_argument(
+        "--audio-mode",
+        action="store_true",
+        help="Send audio directly to Gemma (experimental)",
+    )
+    ap.add_argument(
+        "--model",
+        default="gemma-4-e4b",
+        help="Model alias or HuggingFace repo ID (see config.yaml)",
+    )
     ap.add_argument("--silence-ms", type=int, default=700)
-    ap.add_argument("--record", nargs="?", const="", metavar="FILE",
-                    help="Record mic to WAV for debugging (default: tmp/recording-TIMESTAMP.wav)")
+    ap.add_argument(
+        "--record",
+        nargs="?",
+        const="",
+        metavar="FILE",
+        help="Record mic to WAV for debugging (default: tmp/recording-TIMESTAMP.wav)",
+    )
     ap.add_argument("--voice", default="af_heart", help="Kokoro voice")
     args = ap.parse_args()
+    if args.audio_mode and IS_LINUX:
+        print(
+            "Error: --audio-mode is not supported on Linux (requires MLX multimodal input)."
+        )
+        sys.exit(1)
     if args.record == "":
         tmp_dir = _DIR / "tmp"
         tmp_dir.mkdir(exist_ok=True)
@@ -149,31 +282,61 @@ def main():
 
     print("Loading Silero VAD...", flush=True)
     from silero_vad import load_silero_vad
+
     vad = load_silero_vad(onnx=True)
     print("Loading Moonshine (transcription)...", flush=True)
     from moonshine_voice import Transcriber, get_model_for_language
+
     ms_path, ms_arch = get_model_for_language("en")
     moonshine = Transcriber(model_path=str(ms_path), model_arch=ms_arch)
-    print(f"Loading {args.model} (first run downloads ~3GB)...", flush=True)
-    from mlx_vlm import load, generate
-    model, processor = load(args.model)
+    print(f"Loading {args.model}...", flush=True)
+    if IS_DARWIN:
+        from mlx_vlm import load, generate
+
+        entry = resolve_model(args.model, "darwin")
+        repo_id = entry["repo"] if entry else args.model
+        model, processor = load(repo_id)
+    else:
+        check_linux_deps()
+        entry = resolve_model(args.model, "linux")
+        _llm_api_base = entry["api_base"] if entry else "http://localhost:8088/v1"
+        _llm_model = entry["model"] if entry else args.model
+        try:
+            urllib.request.urlopen(f"{_llm_api_base}/models", timeout=5)
+        except Exception as exc:
+            print(
+                f"Error: Cannot reach inference API at {_llm_api_base}. "
+                f"Is llama.cpp server running? ({type(exc).__name__}: {exc})"
+            )
+            sys.exit(1)
+        print(f"  Using {_llm_model} via {_llm_api_base}", flush=True)
     smart_turn = load_smart_turn() if args.smart_turn else None
     kokoro = None
     if args.tts:
         print("Loading Kokoro TTS...", flush=True)
         import subprocess
+
         try:
-            prefix = subprocess.check_output(["brew", "--prefix", "espeak-ng"], text=True).strip()
-            os.environ.setdefault("PHONEMIZER_ESPEAK_LIBRARY", f"{prefix}/lib/libespeak-ng.dylib")
+            lib = ctypes.util.find_library("espeak-ng")
+            if lib:
+                os.environ.setdefault("PHONEMIZER_ESPEAK_LIBRARY", lib)
+            elif IS_DARWIN:
+                prefix = subprocess.check_output(
+                    ["brew", "--prefix", "espeak-ng"], text=True
+                ).strip()
+                os.environ.setdefault(
+                    "PHONEMIZER_ESPEAK_LIBRARY", f"{prefix}/lib/libespeak-ng.dylib"
+                )
         except (FileNotFoundError, subprocess.CalledProcessError):
             pass
         from kokoro_onnx import Kokoro
+
         cache_dir = os.path.join(tempfile.gettempdir(), "kokoro_tts")
         model_file = os.path.join(cache_dir, "kokoro-v1.0.onnx")
         voices_file = os.path.join(cache_dir, "voices-v1.0.bin")
         if not os.path.exists(model_file):
             os.makedirs(cache_dir, exist_ok=True)
-            import urllib.request
+
             base = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
             print("  Downloading kokoro model (~300MB)...", flush=True)
             urllib.request.urlretrieve(f"{base}/kokoro-v1.0.onnx", model_file)
@@ -184,23 +347,40 @@ def main():
     if args.aec:
         from livekit.rtc import AudioFrame
         from livekit.rtc.apm import AudioProcessingModule
+
         WF = 160  # 10ms @ 16kHz
+
         def _to_i16(x):
             s = (x * 32767).clip(-32768, 32767).astype(np.int16)
             return np.pad(s, (0, max(0, WF - len(s)))) if len(s) < WF else s
+
         def _frame(b):
-            return AudioFrame(b.tobytes(), sample_rate=SAMPLE_RATE, num_channels=1, samples_per_channel=WF)
+            return AudioFrame(
+                b.tobytes(),
+                sample_rate=SAMPLE_RATE,
+                num_channels=1,
+                samples_per_channel=WF,
+            )
+
         def make_aec_processor():
             apm = AudioProcessingModule(echo_cancellation=True, noise_suppression=True)
+
             def process(mic, ref):
                 cleaned = np.zeros_like(mic)
                 for i in range(0, len(mic), WF):
-                    mic_f = _frame(_to_i16(mic[i:i+WF]))
-                    apm.process_reverse_stream(_frame(_to_i16(ref[i:i+WF])))
+                    mic_f = _frame(_to_i16(mic[i : i + WF]))
+                    apm.process_reverse_stream(_frame(_to_i16(ref[i : i + WF])))
                     apm.process_stream(mic_f)
-                    cleaned[i:i+WF] = (np.frombuffer(bytes(mic_f.data), dtype=np.int16).astype(np.float32) / 32767)[:len(mic[i:i+WF])]
+                    cleaned[i : i + WF] = (
+                        np.frombuffer(bytes(mic_f.data), dtype=np.int16).astype(
+                            np.float32
+                        )
+                        / 32767
+                    )[: len(mic[i : i + WF])]
                 return cleaned
+
             return process
+
         print("  AEC: WebRTC AEC3 (LiveKit APM)")
     executor = ThreadPoolExecutor(max_workers=1)
     # --chime-loop: single buffer (chime + ticks), one sd.play call
@@ -222,18 +402,56 @@ def main():
             audio_q.get_nowait()
 
     def transcribe(audio_data):
-        return " ".join(l.text for l in moonshine.transcribe_without_streaming(
-            audio_data.tolist(), SAMPLE_RATE).lines if l.text).strip()
+        return " ".join(
+            l.text
+            for l in moonshine.transcribe_without_streaming(
+                audio_data.tolist(), SAMPLE_RATE
+            ).lines
+            if l.text
+        ).strip()
 
     def llm_generate(messages, max_tokens=200, temperature=0.7, **kwargs):
-        prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        r = generate(model, processor, prompt, max_tokens=max_tokens,
-                     temperature=temperature, repetition_penalty=1.2, verbose=False, **kwargs)
-        return r.text if hasattr(r, "text") else str(r)
+        if IS_DARWIN:
+            prompt = processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            r = generate(
+                model,
+                processor,
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                repetition_penalty=1.2,
+                verbose=False,
+                **kwargs,
+            )
+            return r.text if hasattr(r, "text") else str(r)
+        else:
+            data = json.dumps(
+                {
+                    "model": _llm_model,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                }
+            ).encode()
+            req = urllib.request.Request(
+                f"{_llm_api_base}/chat/completions",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req) as resp:
+                result = json.loads(resp.read())
+            return result["choices"][0]["message"].get("content", "") or ""
 
     def speak_tts(text):
-        samples, sr = kokoro.create(text, voice=args.voice, speed=1.0, lang=_lang_from_voice(args.voice))
-        sd.play(samples, sr); sd.wait()
+        if not text or not text.strip():
+            return
+        samples, sr = kokoro.create(
+            text, voice=args.voice, speed=1.0, lang=_lang_from_voice(args.voice)
+        )
+        sd.play(samples, sr)
+        sd.wait()
 
     _mem_path = _DIR / "MEMORY.md"
 
@@ -244,7 +462,8 @@ def main():
         try:
             return llm_generate(
                 [{"role": "user", "content": prompt}],
-                max_tokens=max_tokens, temperature=temperature,
+                max_tokens=max_tokens,
+                temperature=temperature,
             ).strip()
         except Exception as e:
             print(f"  [{label} failed: {e}]", file=sys.stderr)
@@ -257,7 +476,9 @@ def main():
             "Did the user state a new durable fact about themselves? "
             "If yes, output one short fact per line starting with '- '. "
             "If no, output ONLY: NONE. Do not invent facts.",
-            max_tokens=60, temperature=0.2, label="memory update",
+            max_tokens=60,
+            temperature=0.2,
+            label="memory update",
         )
         if result and "NONE" not in result.upper():
             lines = [l for l in result.splitlines() if l.strip().startswith("-")]
@@ -276,7 +497,9 @@ def main():
             "durable facts (identity, preferences, relationships, location, "
             "ongoing projects). Output the cleaned file, starting with '# Memory' "
             "followed by bullets starting with '- '. No explanation.",
-            max_tokens=300, temperature=0.2, label="memory consolidation",
+            max_tokens=300,
+            temperature=0.2,
+            label="memory consolidation",
         )
         if result and result.startswith("# Memory"):
             _mem_path.write_text(result + "\n")
@@ -292,7 +515,7 @@ def main():
         if chime_sound is None or chime_started_at[0] == 0:
             return
         CHIME_HEAD = 0.22  # end of chime tones in buffer
-        TICK_DUR = 0.04    # tick length
+        TICK_DUR = 0.04  # tick length
         TICK_EVERY = 1.5
         t = _time.monotonic() - chime_started_at[0]
         if t < CHIME_HEAD:
@@ -306,7 +529,9 @@ def main():
 
     def play_tts_stream(response):
         drain_audio_q()
-        tts_stream = kokoro.create_stream(response, voice=args.voice, speed=1.0, lang=_lang_from_voice(args.voice))
+        tts_stream = kokoro.create_stream(
+            response, voice=args.voice, speed=1.0, lang=_lang_from_voice(args.voice)
+        )
         out_stream, interrupted = None, False
         tts_16k_buf: list[np.ndarray] = []
         state = {"play_start": None, "consec_speech": 0, "mic_pos": 0}
@@ -340,29 +565,39 @@ def main():
                     if chime_sound is not None:
                         _wait_for_chime_gap()
                         sd.stop()
-                    out_stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32")
+                    out_stream = sd.OutputStream(
+                        samplerate=sr, channels=1, dtype="float32"
+                    )
                     out_stream.start()
-                    drain_audio_q(); vad.reset_states()
+                    drain_audio_q()
+                    vad.reset_states()
                     state["play_start"] = _time.monotonic()
                 if aec_process is not None:
                     if sr == SAMPLE_RATE:
                         tts_16k_buf.append(chunk_samples.astype(np.float32))
                     else:
                         idx = np.arange(0, len(chunk_samples), sr / SAMPLE_RATE)
-                        tts_16k_buf.append(np.interp(idx, np.arange(len(chunk_samples)), chunk_samples).astype(np.float32))
+                        tts_16k_buf.append(
+                            np.interp(
+                                idx, np.arange(len(chunk_samples)), chunk_samples
+                            ).astype(np.float32)
+                        )
                 data = chunk_samples.reshape(-1, 1)
                 for i in range(0, len(data), 4096):
                     if select.select([sys.stdin], [], [], 0)[0]:
-                        sys.stdin.read(1); interrupted = True
+                        sys.stdin.read(1)
+                        interrupted = True
                     elif check_barge_in():
-                        interrupted = True; print("  [voice interrupt]", flush=True)
+                        interrupted = True
+                        print("  [voice interrupt]", flush=True)
                     if interrupted:
                         break
-                    out_stream.write(data[i:i+4096])
+                    out_stream.write(data[i : i + 4096])
                 if interrupted:
                     break
             if out_stream:
-                out_stream.stop(); out_stream.close()
+                out_stream.stop()
+                out_stream.close()
 
         asyncio.run(_play())
         if interrupted and state["consec_speech"] < 3:
@@ -381,8 +616,10 @@ def main():
         try:
             messages = _sys_messages()
             for h in history[-MAX_HISTORY:]:
-                messages += [{"role": "user", "content": h["user"]},
-                             {"role": "assistant", "content": h["assistant"]}]
+                messages += [
+                    {"role": "user", "content": h["user"]},
+                    {"role": "assistant", "content": h["assistant"]},
+                ]
             if args.audio_mode:
                 transcribe_future = executor.submit(transcribe, audio)
                 messages.append({"role": "user", "content": [{"type": "audio"}]})
@@ -390,7 +627,9 @@ def main():
                 heard = transcribe(audio)
                 print(f"  [{heard}]")
                 messages.append({"role": "user", "content": heard})
-            response = llm_generate(messages, **({"audio": [wav_path]} if args.audio_mode else {}))
+            response = llm_generate(
+                messages, **({"audio": [wav_path]} if args.audio_mode else {})
+            )
             if args.audio_mode:
                 heard = transcribe_future.result(timeout=10)
                 print(f"  [{heard}]")
@@ -414,7 +653,9 @@ def main():
                 os.unlink(wav_path)
 
     history, buf = [], []
-    chime_started_at = [0.0]  # monotonic time when last chime started (for tick-boundary TTS start)
+    chime_started_at = [
+        0.0
+    ]  # monotonic time when last chime started (for tick-boundary TTS start)
     speaking, silent_chunks = False, 0
 
     # Set terminal to raw mode so keypress interrupts work without Enter
@@ -422,24 +663,44 @@ def main():
     tty.setcbreak(sys.stdin.fileno())
 
     mode = "audio" if args.audio_mode else "text"
-    print(f"\nListening (mode: {mode}, tts: {args.tts}, silence: {args.silence_ms}ms, smart-turn: {args.smart_turn})")
-    tts_hint = (" Speak or press any key to interrupt TTS." if args.aec else " Press any key to interrupt TTS.") if args.tts else ""
+    print(
+        f"\nListening (mode: {mode}, tts: {args.tts}, silence: {args.silence_ms}ms, smart-turn: {args.smart_turn})"
+    )
+    tts_hint = (
+        (
+            " Speak or press any key to interrupt TTS."
+            if args.aec
+            else " Press any key to interrupt TTS."
+        )
+        if args.tts
+        else ""
+    )
     print(f"Speak into your microphone. Ctrl+C to quit.{tts_hint}\n", flush=True)
 
-    greeting = llm_generate(_sys_messages() + [
-        {"role": "user", "content": (
-            "Greet the user as Voice Loop in one short sentence. "
-            "If my name is in memory, use it and ask how you can help. "
-            "Otherwise, ask for my name."
-        )},
-    ], max_tokens=60)
+    greeting = llm_generate(
+        _sys_messages()
+        + [
+            {
+                "role": "user",
+                "content": (
+                    "Greet the user as Voice Loop in one short sentence. "
+                    "If my name is in memory, use it and ask how you can help. "
+                    "Otherwise, ask for my name."
+                ),
+            },
+        ],
+        max_tokens=512,
+    )
     print(f"> {greeting}\n", flush=True)
     if kokoro:
         speak_tts(greeting)
 
     with sd.InputStream(
-        samplerate=SAMPLE_RATE, channels=1, dtype="float32",
-        blocksize=CHUNK_SAMPLES, callback=callback,
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        dtype="float32",
+        blocksize=CHUNK_SAMPLES,
+        callback=callback,
     ):
         try:
             while True:
@@ -478,9 +739,16 @@ def main():
             if args.record and record_buf:
                 full = np.concatenate(record_buf)
                 with wave.open(args.record, "wb") as wf:
-                    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(SAMPLE_RATE)
-                    wf.writeframes((full * 32767).clip(-32768, 32767).astype(np.int16).tobytes())
-                print(f"Recorded {len(full) / SAMPLE_RATE:.1f}s to {args.record}", flush=True)
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(SAMPLE_RATE)
+                    wf.writeframes(
+                        (full * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
+                    )
+                print(
+                    f"Recorded {len(full) / SAMPLE_RATE:.1f}s to {args.record}",
+                    flush=True,
+                )
 
 
 if __name__ == "__main__":

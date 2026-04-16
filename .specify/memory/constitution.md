@@ -1,17 +1,19 @@
 <!--
 Sync Impact Report
-- Version change: 0.0.0 (template) → 1.0.0
-- Modified principles: none (initial adoption)
-- Added sections:
-  - I. On-Device First
-  - II. Simplicity & Minimalism
-  - III. User Sovereignty
-  - IV. Audio Pipeline Integrity
-  - V. Incremental Evolution
-  - Technology Constraints
-  - Development Workflow
-  - Governance
+- Version change: 1.0.0 → 1.1.0
+- Modified principles:
+  - II. Simplicity & Minimalism (updated filename reference)
+- Modified sections:
+  - Technology Constraints (expanded to dual-platform scope)
+  - Development Workflow (updated filename reference)
+- Added sections: none
 - Removed sections: none
+- Changes driven by: /speckit.analyze CRITICAL findings C1, C2, C3 —
+  constitution referenced stale `voice_loop_mac.py` filename and
+  Technology Constraints only listed macOS.
+- Bump rationale: MINOR — Technology Constraints materially expanded
+  with Linux/CUDA platform support; no principles removed or
+  redefined.
 - Templates requiring updates:
   - .specify/templates/plan-template.md ✅ (Constitution Check gate compatible)
   - .specify/templates/spec-template.md ✅ (no mandatory section changes)
@@ -19,6 +21,7 @@ Sync Impact Report
   - .opencode/command/speckit.constitution.md ✅ (no outdated agent references)
   - .opencode/command/speckit.plan.md ✅ (no outdated agent references)
   - .opencode/command/speckit.implement.md ✅ (no outdated agent references)
+  - AGENTS.md ✅ (references already updated by agent context script)
 - Follow-up TODOs: RATIFICATION_DATE (original adoption date unknown)
 -->
 
@@ -37,7 +40,7 @@ works offline.
 ### II. Simplicity & Minimalism
 
 The project SHALL prioritize a single-file architecture for the core
-runtime (`voice_loop_mac.py`) unless a clear performance or maintenance
+runtime (`voice_loop.py`) unless a clear performance or maintenance
 benefit justifies extraction. Every new dependency MUST be essential;
 prefer standard-library or already-transitive solutions. YAGNI applies:
 do not add abstraction layers in anticipation of future features.
@@ -75,26 +78,32 @@ disable it at runtime.
 ## Technology Constraints
 
 - **Language/Runtime**: Python 3.11+ managed with `uv`.
-- **Target Platform**: macOS on Apple Silicon (M-series); Metal/MLX for
-  LLM inference.
+- **Target Platforms**:
+  - macOS on Apple Silicon (M-series): Metal/MLX for LLM inference.
+  - Arch Linux x86_64 with NVIDIA CUDA GPU (compute capability ≥ 7.0,
+    VRAM ≥ 4 GB): llama.cpp/CUDA for LLM inference.
 - **Audio Stack**: 16 kHz mono, 512-sample chunks (32 ms). `sounddevice`
   for I/O, `numpy` for signal manipulation.
-- **Inference**: Moonshine (CPU, STT), Gemma 4 E4B (MLX/Metal, LLM),
-  Kokoro (CPU, TTS), Silero VAD + Smart Turn v3 (endpoint detection),
-  WebRTC AEC3 via LiveKit APM (echo cancellation).
+- **Inference**: Moonshine (CPU, STT), Gemma 4 E4B (MLX/Metal on macOS
+  or llama.cpp/CUDA on Linux for LLM), Kokoro (CPU, TTS), Silero VAD +
+  Smart Turn v3 (endpoint detection), WebRTC AEC3 via LiveKit APM
+  (echo cancellation).
+- **Configuration**: `config.yaml` at project root for user-tunable
+  settings (model aliases, etc.). Built-in defaults used when absent.
 - **Distribution**: Single-file script with `uv` dependency resolution.
-  No build step, no container requirement.
+  Platform-specific deps use PEP 508 environment markers in
+  `pyproject.toml`. No build step, no container requirement.
 
 ## Development Workflow
 
-1. **Implementation Style**: Edit `voice_loop_mac.py` directly. Extract
+1. **Implementation Style**: Edit `voice_loop.py` directly. Extract
    modules only when a component becomes independently testable or is
    reused by another script.
 2. **Validation Gate**: Every change MUST be validated by running the
    voice loop and confirming the audio pipeline completes a full
-   turn without error.
-3. **Configuration First**: Adjust `SOUL.md` or add CLI flags before
-   changing hard-coded behavior.
+   turn without error on each target platform.
+3. **Configuration First**: Adjust `SOUL.md`, `config.yaml`, or add
+   CLI flags before changing hard-coded behavior.
 4. **Versioning**: Project version follows SemVer in `pyproject.toml`.
    Constitution version follows its own SemVer track.
 
@@ -112,4 +121,4 @@ This constitution supersedes all ad-hoc development decisions.
   runtime development guidance; keep it synchronized when technology
   constraints change.
 
-**Version**: 1.0.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-04-16
+**Version**: 1.1.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-04-16
