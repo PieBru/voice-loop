@@ -169,15 +169,15 @@ def _get_ref_segment(tts_concat, pos, length):
 _DEFAULT_ALIASES = {
     "gemma-4-e4b": {
         "darwin": {"repo": "mlx-community/gemma-4-E4B-it-4bit"},
-        "linux": {"api_base": "http://localhost:8088/v1", "model": "gemma4-e4b"},
+        "linux": {"api_base": "http://localhost:8088/v1", "model": "Gemma4-E4B"},
     },
     "gemma-4-26b": {
         "darwin": {"repo": "mlx-community/gemma-4-E4B-it-4bit"},
-        "linux": {"api_base": "http://localhost:8088/v1", "model": "gemma4-26B"},
+        "linux": {"api_base": "http://localhost:8088/v1", "model": "Gemma4-26B"},
     },
     "gemma-4-e2b": {
         "darwin": {"repo": "mlx-community/gemma-4-E2B-it-4bit"},
-        "linux": {"api_base": "http://localhost:8088/v1", "model": "gemma4-e4b"},
+        "linux": {"api_base": "http://localhost:8088/v1", "model": "Gemma4-E4B"},
     },
 }
 
@@ -303,10 +303,10 @@ def main():
         _llm_model = entry["model"] if entry else args.model
         try:
             urllib.request.urlopen(f"{_llm_api_base}/models", timeout=5)
-        except Exception:
+        except Exception as exc:
             print(
                 f"Error: Cannot reach inference API at {_llm_api_base}. "
-                "Is llama.cpp server running?"
+                f"Is llama.cpp server running? ({type(exc).__name__}: {exc})"
             )
             sys.exit(1)
         print(f"  Using {_llm_model} via {_llm_api_base}", flush=True)
@@ -336,7 +336,6 @@ def main():
         voices_file = os.path.join(cache_dir, "voices-v1.0.bin")
         if not os.path.exists(model_file):
             os.makedirs(cache_dir, exist_ok=True)
-            import urllib.request
 
             base = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
             print("  Downloading kokoro model (~300MB)...", flush=True)
@@ -443,9 +442,11 @@ def main():
             )
             with urllib.request.urlopen(req) as resp:
                 result = json.loads(resp.read())
-            return result["choices"][0]["message"]["content"]
+            return result["choices"][0]["message"].get("content", "") or ""
 
     def speak_tts(text):
+        if not text or not text.strip():
+            return
         samples, sr = kokoro.create(
             text, voice=args.voice, speed=1.0, lang=_lang_from_voice(args.voice)
         )
@@ -688,7 +689,7 @@ def main():
                 ),
             },
         ],
-        max_tokens=60,
+        max_tokens=512,
     )
     print(f"> {greeting}\n", flush=True)
     if kokoro:
