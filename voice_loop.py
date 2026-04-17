@@ -360,28 +360,31 @@ def main():
     ap = argparse.ArgumentParser(
         description="Voice Loop — a minimal on-device voice agent"
     )
-    B = argparse.BooleanOptionalAction
     ap.add_argument(
-        "--tts", action=B, default=True, help="Kokoro TTS output (default: on)"
+        "--no-tts",
+        action="store_false",
+        dest="tts",
+        help="Disable Kokoro TTS output",
     )
     ap.add_argument(
-        "--smart-turn",
-        action=B,
-        default=True,
-        help="Smart Turn v3 endpoint detection (default: on)",
+        "--no-smart-turn",
+        action="store_false",
+        dest="smart_turn",
+        help="Disable Smart Turn v3 endpoint detection",
     )
     ap.add_argument(
-        "--aec",
-        action=B,
-        default=True,
-        help="WebRTC AEC3 voice interrupt (default: on)",
+        "--no-aec",
+        action="store_false",
+        dest="aec",
+        help="Disable WebRTC AEC3 voice interrupt",
     )
     ap.add_argument(
-        "--chime",
-        action=B,
-        default=True,
-        help="Chime on utterance + soft ticks while generating (default: on)",
+        "--no-chime",
+        action="store_false",
+        dest="chime",
+        help="Disable chime on utterance + soft ticks while generating",
     )
+    ap.set_defaults(tts=True, smart_turn=True, aec=True, chime=True)
     ap.add_argument(
         "--memory",
         action="store_true",
@@ -390,7 +393,7 @@ def main():
     ap.add_argument(
         "--audio-mode",
         action="store_true",
-        help="Send audio directly to Gemma (experimental)",
+        help="Use the LLM endpoint for STT (experimental)",
     )
     ap.add_argument(
         "--model",
@@ -411,14 +414,14 @@ def main():
         help="Record mic to WAV for debugging (default: tmp/recording-TIMESTAMP.wav)",
     )
     ap.add_argument(
-        "--voice",
-        default=None,
-        help="Kokoro voice (default: language-appropriate voice, e.g. af_heart for English)",
-    )
-    ap.add_argument(
         "--lang",
         default="en",
         help="Language code for STT/LLM/TTS pipeline (default: en)",
+    )
+    ap.add_argument(
+        "--voice",
+        default=None,
+        help="Kokoro voice (default: language-appropriate voice, e.g. af_heart for English)",
     )
     ap.add_argument(
         "--stt",
