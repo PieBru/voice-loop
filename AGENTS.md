@@ -54,6 +54,7 @@ This repo uses the `.specify` framework for structured feature work. If adding a
 - Python 3.11+ (managed with `uv`) + faster-whisper 1.2.1, moonshine-voice, kokoro-onnx, qwen-tts (Linux only)
 - File-based (HF cache for models, config.yaml for settings)
 - Python 3.11+ managed with `uv` + stdlib `urllib.request`, `json`; no new cloud dependencies
+- Python 3.11+ (managed with `uv`) + `asyncio`, `threading`, `queue`, `re`, `numpy`, `sounddevice` (all already in project) (008-streaming-tts)
 
 ## Recent Changes
 - 006-qwen-tts-cpp: Added `--tts qwen-cpp` option, subprocess integration with `qwen3-tts-cli`, config for binary path/model dir/ref audio, `_print_qwen_cpp_info()`, install instructions
