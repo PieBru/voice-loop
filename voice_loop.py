@@ -89,9 +89,10 @@ def make_chime(duration=30.0, tick_every=1.5):
 
 def _lang_from_voice(v: str) -> str:
     """Infer Kokoro lang code from voice prefix.
-    a* = US English, b* = UK English, e* = Spanish, f* = French,
-    h* = Hindi, i* = Italian, j* = Japanese, p* = Portuguese, z* = Chinese."""
-    prefix = v[:1] if len(v) > 1 and v[1] == "_" else ""
+    Voice format: {lang}{gender}_{name}, e.g. if_sara = Italian Female sara.
+    a = US English, b = UK English, e = Spanish, f = French,
+    h = Hindi, i = Italian, j = Japanese, p = Portuguese, z = Chinese."""
+    prefix = v[0] if v else ""
     return {
         "a": "en-us",
         "b": "en-gb",
