@@ -2,6 +2,8 @@
 
 A minimal on-device voice agent loop. Runs entirely on macOS (Apple Silicon) and Linux (NVIDIA CUDA).
 
+**Now with even snappier audio responses** — TTS starts on the first sentence while the LLM is still generating the rest, so you hear the reply almost immediately.
+
 > Need a custom voice model or production voice agent? See [Trelis Voice AI Services](https://trelis.com/voice-ai-services/).
 
 ## Features
@@ -243,7 +245,7 @@ Any ISO 639-1 code works for STT (99+ languages via Whisper). Only languages wit
 3. **Smart Turn** confirms end-of-turn on silence (default on)
 4. **Moonshine or faster-whisper** transcribes your audio to text (auto-selected per language)
 5. **Gemma 4 E4B** responds using SOUL.md (+ MEMORY.md if `--memory`) as system prompt
-6. **Kokoro** synthesizes speech, streams audio (or **Qwen3-TTS** synthesizes full response then plays)
+6. **Kokoro** synthesizes sentence pairs in a background thread while the previous pair plays — gapless, low-latency audio (or **Qwen3-TTS** synthesizes full response then plays)
 7. **WebRTC AEC3** cleans mic during TTS playback → Silero VAD on cleaned audio → voice interrupt
 
 Press any key during TTS to interrupt.
@@ -304,6 +306,10 @@ Changes on top of the upstream [TrelisResearch/voice-loop](https://github.com/Tr
 - **`--list-handlers` flag** — shows all available response handlers with descriptions.
 - **`--offline` flag** — sets `HF_HUB_OFFLINE=1` for fully offline operation after first model download.
 - **`config.yaml` handlers section** — configure endpoint URL, model name, token, and timeout per handler.
+
+## Raspberry Pi
+
+See [docs/raspberry-pi.md](docs/raspberry-pi.md) for a full feasibility analysis. Short version: Pi 4 is too slow; Pi 5 + LiteRT-LM is the best current option but still borderline for natural-feeling voice.
 
 ## License
 
