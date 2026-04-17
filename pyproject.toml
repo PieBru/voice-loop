@@ -16,4 +16,5 @@ dependencies = [
     "torch>=2.0",
     "kokoro-onnx>=0.4",
     "soundfile>=0.12",
+    "faster-whisper>=1.2",
 ]

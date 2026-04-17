@@ -14,14 +14,16 @@
 - **Single-file core**: `voice_loop.py` is the intentional main runtime. The constitution prefers keeping it single-file unless there is a clear performance or maintenance reason to extract.
 - **On-device first**: No cloud API keys, no network calls in the hot path. All inference is local.
 - **Sacred audio constants**: 16 kHz mono, 512-sample chunks (32 ms). Do not change sample rates or buffer sizes without end-to-end validation.
-- **Configuration**: `config.yaml` at project root for user-tunable settings (model aliases). Built-in defaults used when absent.
+- **Configuration**: `config.yaml` at project root for user-tunable settings (model aliases, language settings). Built-in defaults used when absent.
+- **Multilanguage**: `--lang` flag sets language for the full pipeline (STT + LLM + TTS). `--stt` flag selects STT backend (`whisper` or `moonshine`; auto-selected if omitted). Default language is `en` (English).
 
 ## How to Change Behavior
 
 1. **Persona/style**: edit `SOUL.md` (live-reloaded every turn).
 2. **Model aliases**: edit `config.yaml` (loaded at startup).
-3. **New capability**: add a CLI flag in `voice_loop.py` before hard-coding behavior. Every new feature MUST be disable-able at runtime.
-4. **Memory**: enable with `--memory`; `MEMORY.md` is gitignored user-local state.
+3. **Language/STT backend**: use `--lang` and `--stt` CLI flags; defaults preserve English-only behavior.
+4. **New capability**: add a CLI flag in `voice_loop.py` before hard-coding behavior. Every new feature MUST be disable-able at runtime.
+5. **Memory**: enable with `--memory`; `MEMORY.md` is gitignored user-local state.
 
 ## Validation
 
@@ -43,3 +45,10 @@ This repo uses the `.specify` framework for structured feature work. If adding a
 - Do not extract modules from `voice_loop.py` "for cleanliness".
 - Do not introduce cloud APIs or external services in the core loop.
 - Do not change existing CLI flag defaults without a MAJOR version bump.
+
+## Active Technologies
+- Python 3.11+ (managed with `uv`) + faster-whisper 1.2.1 (new), moonshine-voice (existing), kokoro-onnx (existing) (002-multilang-support)
+- File-based (HF cache for models, config.yaml for settings) (002-multilang-support)
+
+## Recent Changes
+- 002-multilang-support: Added Python 3.11+ (managed with `uv`) + faster-whisper 1.2.1 (new), moonshine-voice (existing), kokoro-onnx (existing)

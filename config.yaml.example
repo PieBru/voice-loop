@@ -17,3 +17,13 @@ models:
     linux:
       api_base: http://localhost:8088/v1
       model: Gemma4-E4B
+
+languages:
+  it:
+    tts_voice: if_sara
+    tts_lang: it
+    llm_language: Italian
+  de:
+    tts_voice: af_heart
+    tts_lang: de
+    llm_language: German

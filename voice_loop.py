@@ -4,13 +4,17 @@
 macOS (Apple Silicon): Moonshine (CPU) transcribes, Gemma 4 E4B (Metal)
 responds, Kokoro TTS speaks, WebRTC AEC3 enables voice interrupt.
 Linux (NVIDIA CUDA): Same pipeline via llama.cpp server (OpenAI-compatible API).
+Multilanguage: --lang it (Italian), --lang es (Spanish), 99+ languages via Whisper.
 
 Usage:
     uv run voice_loop.py                        # defaults (TTS + smart turn + AEC)
+    uv run voice_loop.py --lang it              # Italian (Whisper STT + Italian TTS)
+    uv run voice_loop.py --lang es              # Spanish (Moonshine STT + Spanish TTS)
     uv run voice_loop.py --no-tts               # text out only
     uv run voice_loop.py --no-aec               # keypress interrupt only
     uv run voice_loop.py --chime                # chime + ticks while generating
     uv run voice_loop.py --memory               # persistent memory (MEMORY.md)
+    uv run voice_loop.py --stt whisper           # force Whisper STT for any language
 """
 
 import argparse
@@ -182,6 +186,20 @@ _DEFAULT_ALIASES = {
 }
 
 
+MOONSHINE_LANGS = frozenset({"en", "ar", "es", "ja", "ko", "vi", "uk", "zh"})
+
+_LANG_MAP = {
+    "en": {"tts_voice": "af_heart", "tts_lang": "en-us", "llm_language": "English"},
+    "es": {"tts_voice": "ef_dora", "tts_lang": "es", "llm_language": "Spanish"},
+    "ja": {"tts_voice": "jf_alpha", "tts_lang": "ja", "llm_language": "Japanese"},
+    "fr": {"tts_voice": "ff_siwis", "tts_lang": "fr-fr", "llm_language": "French"},
+    "it": {"tts_voice": "if_sara", "tts_lang": "it", "llm_language": "Italian"},
+    "pt": {"tts_voice": "pf_dora", "tts_lang": "pt-br", "llm_language": "Portuguese"},
+    "zh": {"tts_voice": "zf_xiaobei", "tts_lang": "cmn", "llm_language": "Chinese"},
+    "de": {"tts_voice": "af_heart", "tts_lang": "en-us", "llm_language": "German"},
+}
+
+
 def load_model_aliases(config_path=None):
     path = Path(config_path) if config_path else _DIR / "config.yaml"
     if path.exists():
@@ -210,6 +228,33 @@ def resolve_model(alias, platform_name):
     return None
 
 
+def resolve_language(lang_code):
+    lang_map = dict(_LANG_MAP)
+    config_path = _DIR / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(config_path.read_text())
+            if data and "languages" in data:
+                for code, entry in data["languages"].items():
+                    lang_map.setdefault(code, {}).update(entry)
+        except Exception:
+            pass
+    if lang_code in lang_map:
+        return lang_map[lang_code]
+    print(
+        f"Warning: Language '{lang_code}' not in built-in map. "
+        "Using whisper STT with English TTS voice.",
+        file=sys.stderr,
+    )
+    return {
+        "tts_voice": "af_heart",
+        "tts_lang": "en-us",
+        "llm_language": lang_code,
+    }
+
+
 def check_linux_deps():
     try:
         import sounddevice
@@ -226,6 +271,46 @@ def check_linux_deps():
     elif not lib:
         print("Error: espeak-ng not found. Install with: pacman -S espeak-ng")
         sys.exit(1)
+
+
+def _print_language_table():
+    import tempfile
+
+    cache_dir = os.path.join(tempfile.gettempdir(), "kokoro_tts")
+    voices_file = os.path.join(cache_dir, "voices-v1.0.bin")
+    if not os.path.exists(voices_file):
+        print("Kokoro voices not downloaded yet. Run voice_loop.py once first.")
+        return
+    import numpy as np
+
+    voices = sorted(np.load(voices_file).keys())
+    prefix_lang = {
+        "a": ("en-us", "English (US)", None),
+        "b": ("en-gb", "English (UK)", None),
+        "e": ("es", "Spanish", None),
+        "f": ("fr-fr", "French", None),
+        "h": ("hi", "Hindi", None),
+        "i": ("it", "Italian", None),
+        "j": ("ja", "Japanese", None),
+        "p": ("pt-br", "Portuguese", None),
+        "z": ("cmn", "Chinese", "zh"),
+    }
+    _tts_to_stt_code = {"cmn": "zh"}
+    by_prefix = {}
+    for v in voices:
+        p = v[0]
+        by_prefix.setdefault(p, []).append(v)
+    print(f"{'Lang':<12} {'Code':<6} {'STT':<10} Voices")
+    print("-" * 70)
+    for prefix in sorted(by_prefix.keys()):
+        entry = prefix_lang.get(prefix, ("??", f"Unknown ({prefix})", None))
+        code, name = entry[0], entry[1]
+        stt_code = _tts_to_stt_code.get(code, code.split("-")[0])
+        stt = "moonshine" if stt_code in MOONSHINE_LANGS else "whisper"
+        voice_list = ", ".join(by_prefix[prefix])
+        print(f"{name:<12} {code:<6} {stt:<10} {voice_list}")
+    print(f"\nTotal: {len(voices)} voices across {len(by_prefix)} languages")
+    print("faster-whisper supports 99+ languages for transcription")
 
 
 def main():
@@ -267,8 +352,31 @@ def main():
         metavar="FILE",
         help="Record mic to WAV for debugging (default: tmp/recording-TIMESTAMP.wav)",
     )
-    ap.add_argument("--voice", default="af_heart", help="Kokoro voice")
+    ap.add_argument(
+        "--voice",
+        default=None,
+        help="Kokoro voice (default: language-appropriate voice, e.g. af_heart for English)",
+    )
+    ap.add_argument(
+        "--lang",
+        default="en",
+        help="Language code for STT/LLM/TTS pipeline (built-in: en, es, ja, fr, it, pt, zh, de)",
+    )
+    ap.add_argument(
+        "--stt",
+        default=None,
+        choices=["whisper", "moonshine"],
+        help="STT backend (default: auto-select based on language)",
+    )
+    ap.add_argument(
+        "--list",
+        action="store_true",
+        help="List available TTS voices by language and exit",
+    )
     args = ap.parse_args()
+    if args.list:
+        _print_language_table()
+        sys.exit(0)
     if args.audio_mode and IS_LINUX:
         print(
             "Error: --audio-mode is not supported on Linux (requires MLX multimodal input)."
@@ -280,15 +388,42 @@ def main():
         args.record = str(tmp_dir / f"recording-{_time.strftime('%Y%m%d-%H%M%S')}.wav")
     silence_limit = max(1, int(args.silence_ms / (CHUNK_SAMPLES / SAMPLE_RATE * 1000)))
 
+    _lang_cfg = resolve_language(args.lang)
+    if args.stt:
+        _stt_backend = args.stt
+    elif args.lang in MOONSHINE_LANGS:
+        _stt_backend = "moonshine"
+    else:
+        _stt_backend = "whisper"
+
+    if args.stt == "moonshine" and args.lang not in MOONSHINE_LANGS:
+        print(
+            f"Error: Moonshine does not support language '{args.lang}'. "
+            f"Supported: {', '.join(sorted(MOONSHINE_LANGS))}. "
+            f"Use --stt whisper for {_lang_cfg['llm_language']}."
+        )
+        sys.exit(1)
+
+    if args.voice is None:
+        args.voice = _lang_cfg["tts_voice"]
+
     print("Loading Silero VAD...", flush=True)
     from silero_vad import load_silero_vad
 
     vad = load_silero_vad(onnx=True)
-    print("Loading Moonshine (transcription)...", flush=True)
-    from moonshine_voice import Transcriber, get_model_for_language
+    _whisper_model = None
+    moonshine = None
+    if _stt_backend == "whisper":
+        print("Loading Whisper base (transcription)...", flush=True)
+        from faster_whisper import WhisperModel
 
-    ms_path, ms_arch = get_model_for_language("en")
-    moonshine = Transcriber(model_path=str(ms_path), model_arch=ms_arch)
+        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+    else:
+        print("Loading Moonshine (transcription)...", flush=True)
+        from moonshine_voice import Transcriber, get_model_for_language
+
+        ms_path, ms_arch = get_model_for_language(args.lang)
+        moonshine = Transcriber(model_path=str(ms_path), model_arch=ms_arch)
     print(f"Loading {args.model}...", flush=True)
     if IS_DARWIN:
         from mlx_vlm import load, generate
@@ -302,12 +437,47 @@ def main():
         _llm_api_base = entry["api_base"] if entry else "http://localhost:8088/v1"
         _llm_model = entry["model"] if entry else args.model
         try:
-            urllib.request.urlopen(f"{_llm_api_base}/models", timeout=5)
-        except Exception as exc:
+            with urllib.request.urlopen(f"{_llm_api_base}/models", timeout=5) as resp:
+                models_data = json.loads(resp.read())
+            model_statuses = {
+                m["id"]: m["status"]["value"] for m in models_data.get("data", [])
+            }
+            if _llm_model not in model_statuses:
+                print(
+                    f"Error: Model '{_llm_model}' not found on server. "
+                    f"Available: {', '.join(sorted(model_statuses.keys()))}"
+                )
+                sys.exit(1)
+            status = model_statuses[_llm_model]
+            if status == "loading":
+                print(f"  Model {_llm_model} is loading, please wait...", flush=True)
+                for _ in range(120):
+                    _time.sleep(2)
+                    with urllib.request.urlopen(
+                        f"{_llm_api_base}/models", timeout=5
+                    ) as r:
+                        st = {
+                            m["id"]: m["status"]["value"]
+                            for m in json.loads(r.read()).get("data", [])
+                        }
+                    if st.get(_llm_model) != "loading":
+                        status = st.get(_llm_model, status)
+                        break
+                if status == "loading":
+                    print(
+                        f"Error: Model {_llm_model} still loading after 4 minutes. Aborting."
+                    )
+                    sys.exit(1)
+            elif status not in ("loaded", "ready", "sleeping", "idle"):
+                print(f"  Warning: Model {_llm_model} status is '{status}'.")
+        except urllib.error.URLError:
             print(
                 f"Error: Cannot reach inference API at {_llm_api_base}. "
-                f"Is llama.cpp server running? ({type(exc).__name__}: {exc})"
+                "Is llama.cpp server running?"
             )
+            sys.exit(1)
+        except Exception as exc:
+            print(f"Error checking inference API: ({type(exc).__name__}: {exc})")
             sys.exit(1)
         print(f"  Using {_llm_model} via {_llm_api_base}", flush=True)
     smart_turn = load_smart_turn() if args.smart_turn else None
@@ -402,6 +572,11 @@ def main():
             audio_q.get_nowait()
 
     def transcribe(audio_data):
+        if _stt_backend == "whisper":
+            segments, info = _whisper_model.transcribe(
+                audio_data, language=args.lang, beam_size=5
+            )
+            return " ".join(seg.text.strip() for seg in segments).strip()
         return " ".join(
             l.text
             for l in moonshine.transcribe_without_streaming(
@@ -440,7 +615,7 @@ def main():
                 data=data,
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 result = json.loads(resp.read())
             return result["choices"][0]["message"].get("content", "") or ""
 
@@ -507,6 +682,11 @@ def main():
 
     def _sys_messages():
         sp = load_system_prompt(include_memory=args.memory)
+        if args.lang != "en" and sp:
+            sp += (
+                f"\n\nYou MUST respond in {_lang_cfg['llm_language']}. "
+                "Never use English unless the user explicitly asks for it."
+            )
         return [{"role": "system", "content": sp}] if sp else []
 
     def _wait_for_chime_gap():
@@ -664,7 +844,8 @@ def main():
 
     mode = "audio" if args.audio_mode else "text"
     print(
-        f"\nListening (mode: {mode}, tts: {args.tts}, silence: {args.silence_ms}ms, smart-turn: {args.smart_turn})"
+        f"\nListening (lang: {args.lang}, stt: {_stt_backend}, tts: {args.voice}, "
+        f"mode: {mode}, silence: {args.silence_ms}ms, smart-turn: {args.smart_turn})"
     )
     tts_hint = (
         (
@@ -677,6 +858,9 @@ def main():
     )
     print(f"Speak into your microphone. Ctrl+C to quit.{tts_hint}\n", flush=True)
 
+    _greeting_lang = ""
+    if args.lang != "en":
+        _greeting_lang = f" Respond in {_lang_cfg['llm_language']}."
     greeting = llm_generate(
         _sys_messages()
         + [
@@ -685,7 +869,7 @@ def main():
                 "content": (
                     "Greet the user as Voice Loop in one short sentence. "
                     "If my name is in memory, use it and ask how you can help. "
-                    "Otherwise, ask for my name."
+                    f"Otherwise, ask for my name.{_greeting_lang}"
                 ),
             },
         ],

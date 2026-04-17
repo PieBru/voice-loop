@@ -1,27 +1,21 @@
 <!--
 Sync Impact Report
-- Version change: 1.0.0 → 1.1.0
-- Modified principles:
-  - II. Simplicity & Minimalism (updated filename reference)
+- Version change: 1.1.0 → 1.1.1
+- Modified principles: none
 - Modified sections:
-  - Technology Constraints (expanded to dual-platform scope)
-  - Development Workflow (updated filename reference)
+  - Technology Constraints (updated STT to include faster-whisper + pluggable backend; added language config)
 - Added sections: none
 - Removed sections: none
-- Changes driven by: /speckit.analyze CRITICAL findings C1, C2, C3 —
-  constitution referenced stale `voice_loop_mac.py` filename and
-  Technology Constraints only listed macOS.
-- Bump rationale: MINOR — Technology Constraints materially expanded
-  with Linux/CUDA platform support; no principles removed or
-  redefined.
+- Changes driven by: feature 002-multilang-support introduces faster-whisper as
+  STT backend alongside Moonshine; STT is now pluggable via --stt flag;
+  --lang flag enables multilanguage pipeline; config.yaml supports language
+  settings.
+- Bump rationale: PATCH — Technology Constraints updated to reflect current
+  STT architecture; no principles removed or redefined.
 - Templates requiring updates:
   - .specify/templates/plan-template.md ✅ (Constitution Check gate compatible)
   - .specify/templates/spec-template.md ✅ (no mandatory section changes)
-  - .specify/templates/tasks-template.md ✅ (no new principle-driven task types)
-  - .opencode/command/speckit.constitution.md ✅ (no outdated agent references)
-  - .opencode/command/speckit.plan.md ✅ (no outdated agent references)
-  - .opencode/command/speckit.implement.md ✅ (no outdated agent references)
-  - AGENTS.md ✅ (references already updated by agent context script)
+  - AGENTS.md ✅ (already updated by agent context script)
 - Follow-up TODOs: RATIFICATION_DATE (original adoption date unknown)
 -->
 
@@ -84,12 +78,13 @@ disable it at runtime.
     VRAM ≥ 4 GB): llama.cpp/CUDA for LLM inference.
 - **Audio Stack**: 16 kHz mono, 512-sample chunks (32 ms). `sounddevice`
   for I/O, `numpy` for signal manipulation.
-- **Inference**: Moonshine (CPU, STT), Gemma 4 E4B (MLX/Metal on macOS
-  or llama.cpp/CUDA on Linux for LLM), Kokoro (CPU, TTS), Silero VAD +
-  Smart Turn v3 (endpoint detection), WebRTC AEC3 via LiveKit APM
-  (echo cancellation).
-- **Configuration**: `config.yaml` at project root for user-tunable
-  settings (model aliases, etc.). Built-in defaults used when absent.
+- **Inference**: Moonshine (CPU, STT for 8 languages) or faster-whisper
+  (CPU/CUDA, STT for 99+ languages; auto-selected for unsupported languages),
+  Gemma 4 E4B (MLX/Metal on macOS or llama.cpp server on Linux for LLM),
+  Kokoro (CPU, TTS, 10 languages), Silero VAD + Smart Turn v3 (endpoint
+  detection), WebRTC AEC3 via LiveKit APM (echo cancellation).
+- **Configuration**: `config.yaml` at project root for user-tunable settings
+  (model aliases, language settings). Built-in defaults used when absent.
 - **Distribution**: Single-file script with `uv` dependency resolution.
   Platform-specific deps use PEP 508 environment markers in
   `pyproject.toml`. No build step, no container requirement.
@@ -121,4 +116,4 @@ This constitution supersedes all ad-hoc development decisions.
   runtime development guidance; keep it synchronized when technology
   constraints change.
 
-**Version**: 1.1.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-04-16
+**Version**: 1.1.1 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-04-16
