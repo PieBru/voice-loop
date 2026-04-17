@@ -197,7 +197,7 @@ _LANG_MAP = {
     "it": {"tts_voice": "if_sara", "tts_lang": "it", "llm_language": "Italian"},
     "pt": {"tts_voice": "pf_dora", "tts_lang": "pt-br", "llm_language": "Portuguese"},
     "zh": {"tts_voice": "zf_xiaobei", "tts_lang": "cmn", "llm_language": "Chinese"},
-    "de": {"tts_voice": "af_heart", "tts_lang": "en-us", "llm_language": "German"},
+    "de": {"tts_voice": "af_heart", "tts_lang": "de", "llm_language": "German"},
 }
 
 
@@ -251,7 +251,7 @@ def resolve_language(lang_code):
     )
     return {
         "tts_voice": "af_heart",
-        "tts_lang": "en-us",
+        "tts_lang": lang_code,
         "llm_language": lang_code,
     }
 
@@ -319,11 +319,21 @@ def main():
         description="Voice Loop — a minimal on-device voice agent"
     )
     B = argparse.BooleanOptionalAction
-    ap.add_argument("--tts", action=B, default=True, help="Kokoro TTS output")
     ap.add_argument(
-        "--smart-turn", action=B, default=True, help="Smart Turn v3 endpoint detection"
+        "--tts", action=B, default=True, help="Kokoro TTS output (default: on)"
     )
-    ap.add_argument("--aec", action=B, default=True, help="WebRTC AEC3 voice interrupt")
+    ap.add_argument(
+        "--smart-turn",
+        action=B,
+        default=True,
+        help="Smart Turn v3 endpoint detection (default: on)",
+    )
+    ap.add_argument(
+        "--aec",
+        action=B,
+        default=True,
+        help="WebRTC AEC3 voice interrupt (default: on)",
+    )
     ap.add_argument(
         "--chime",
         action=B,
@@ -343,9 +353,14 @@ def main():
     ap.add_argument(
         "--model",
         default="gemma-4-e4b",
-        help="Model alias or HuggingFace repo ID (see config.yaml)",
+        help="Model alias or HuggingFace repo ID (default: gemma-4-e4b)",
     )
-    ap.add_argument("--silence-ms", type=int, default=700)
+    ap.add_argument(
+        "--silence-ms",
+        type=int,
+        default=700,
+        help="Silence duration before end-of-turn in ms (default: 700)",
+    )
     ap.add_argument(
         "--record",
         nargs="?",
@@ -361,7 +376,7 @@ def main():
     ap.add_argument(
         "--lang",
         default="en",
-        help="Language code for STT/LLM/TTS pipeline (built-in: en, es, ja, fr, it, pt, zh, de)",
+        help="Language code for STT/LLM/TTS pipeline (default: en)",
     )
     ap.add_argument(
         "--stt",
@@ -635,7 +650,7 @@ def main():
         if not text or not text.strip():
             return
         samples, sr = kokoro.create(
-            text, voice=args.voice, speed=1.0, lang=_lang_from_voice(args.voice)
+            text, voice=args.voice, speed=1.0, lang=_lang_cfg["tts_lang"]
         )
         sd.play(samples, sr)
         sd.wait()
@@ -722,7 +737,7 @@ def main():
     def play_tts_stream(response):
         drain_audio_q()
         tts_stream = kokoro.create_stream(
-            response, voice=args.voice, speed=1.0, lang=_lang_from_voice(args.voice)
+            response, voice=args.voice, speed=1.0, lang=_lang_cfg["tts_lang"]
         )
         out_stream, interrupted = None, False
         tts_16k_buf: list[np.ndarray] = []
