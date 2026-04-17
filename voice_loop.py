@@ -369,6 +369,12 @@ def main():
         help="STT backend (default: auto-select based on language)",
     )
     ap.add_argument(
+        "--whisper-device",
+        default="cpu",
+        choices=["cpu", "cuda"],
+        help="Device for faster-whisper inference (default: cpu)",
+    )
+    ap.add_argument(
         "--list",
         action="store_true",
         help="List available TTS voices by language and exit",
@@ -414,10 +420,15 @@ def main():
     _whisper_model = None
     moonshine = None
     if _stt_backend == "whisper":
-        print("Loading Whisper base (transcription)...", flush=True)
+        print(
+            f"Loading Whisper base / {args.whisper_device} (transcription)...",
+            flush=True,
+        )
         from faster_whisper import WhisperModel
 
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        _whisper_model = WhisperModel(
+            "base", device=args.whisper_device, compute_type="int8"
+        )
     else:
         print("Loading Moonshine (transcription)...", flush=True)
         from moonshine_voice import Transcriber, get_model_for_language
