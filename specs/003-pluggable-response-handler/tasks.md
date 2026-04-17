@@ -16,9 +16,9 @@
 
 **Purpose**: Add CLI flags and handler configuration infrastructure
 
-- [ ] T001 Add `--handler` CLI flag to argparse in `voice_loop.py`: default `"llm"`, help text `"Response generation handler (default: llm)"`, no choices restriction (extensible via config)
-- [ ] T002 Add `--list-handlers` CLI flag to argparse in `voice_loop.py`: action `"store_true"`, help text `"List available response handlers and exit"`. When set, print handler table and exit immediately (before loading models)
-- [ ] T003 [P] Update `config.yaml.example` with a `handlers` section showing the agentic handler defaults (`api_base: http://localhost:8089/v1`, `model: agent-model-name`, `timeout: 60`)
+- [x] T001 Add `--handler` CLI flag to argparse in `voice_loop.py`: default `"llm"`, help text `"Response generation handler (default: llm)"`, no choices restriction (extensible via config)
+- [x] T002 Add `--list-handlers` CLI flag to argparse in `voice_loop.py`: action `"store_true"`, help text `"List available response handlers and exit"`. When set, print handler table and exit immediately (before loading models)
+- [x] T003 [P] Update `config.yaml.example` with a `handlers` section showing the agentic handler defaults (`api_base: http://localhost:8089/v1`, `model: agent-model-name`, `timeout: 60`)
 
 ---
 
@@ -28,9 +28,9 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Add `_HANDLER_DEFAULTS` dict constant to `voice_loop.py` near `_DEFAULT_ALIASES`, mapping built-in handler names to their descriptions and default configs. At minimum: `{"llm": {"description": "Direct LLM API call (default)"}, "agentic": {"description": "External agentic service (configurable endpoint)", "api_base": "http://localhost:8089/v1", "model": "agentic", "timeout": 60}}`
-- [ ] T005 Add `load_handler_config()` function to `voice_loop.py` that reads handler settings from `config.yaml` → `handlers` section, merging with `_HANDLER_DEFAULTS` (same pattern as `load_model_aliases()`). Returns a dict mapping handler names to their resolved configs
-- [ ] T006 Refactor `llm_generate()` in `voice_loop.py` into a handler dispatch pattern: rename the existing closure to `_llm_handler`, create a new `_agentic_handler` closure that sends the same OpenAI-compatible chat completion request to the agentic endpoint (using `urllib.request` with the configured `api_base`, `model`, and `timeout`). Store both in a `_handlers` dict. Create a wrapper `generate_response(messages, max_tokens, temperature)` that dispatches to `_handlers[_active_handler]` with fallback logic: on any exception from the agentic handler, print warning to stderr and permanently switch `_active_handler` to `"llm"` for the session
+- [x] T004 Add `_HANDLER_DEFAULTS` dict constant to `voice_loop.py` near `_DEFAULT_ALIASES`, mapping built-in handler names to their descriptions and default configs. At minimum: `{"llm": {"description": "Direct LLM API call (default)"}, "agentic": {"description": "External agentic service (configurable endpoint)", "api_base": "http://localhost:8089/v1", "model": "agentic", "timeout": 60}}`
+- [x] T005 Add `load_handler_config()` function to `voice_loop.py` that reads handler settings from `config.yaml` → `handlers` section, merging with `_HANDLER_DEFAULTS` (same pattern as `load_model_aliases()`). Returns a dict mapping handler names to their resolved configs
+- [x] T006 Refactor `llm_generate()` in `voice_loop.py` into a handler dispatch pattern: rename the existing closure to `_llm_handler`, create a new `_agentic_handler` closure that sends the same OpenAI-compatible chat completion request to the agentic endpoint (using `urllib.request` with the configured `api_base`, `model`, and `timeout`). Store both in a `_handlers` dict. Create a wrapper `generate_response(messages, max_tokens, temperature)` that dispatches to `_handlers[_active_handler]` with fallback logic: on any exception from the agentic handler, print warning to stderr and permanently switch `_active_handler` to `"llm"` for the session
 
 **Checkpoint**: Handler infrastructure ready — user story implementation can begin
 
@@ -44,10 +44,10 @@
 
 ### Implementation
 
-- [ ] T007 [US1] After argparse in `voice_loop.py` main(), resolve handler config: load via `load_handler_config()`, validate `args.handler` is a known handler name (print error listing available handlers and exit if not). Set `_active_handler = args.handler`. Store the resolved handler config in `_handler_cfg`
-- [ ] T008 [US1] Replace all calls to `llm_generate()` in `voice_loop.py` with `generate_response()`. This includes: the greeting call (~line 891), `process_utterance()` call, and the memory helper functions (`_run_memory()`). The `llm_generate` name can be kept as an alias for the `llm` handler closure internally
-- [ ] T009 [US2] Add startup validation for the agentic handler in `voice_loop.py` main(): if `_active_handler == "agentic"`, try `urllib.request.urlopen(f"{_handler_cfg['api_base']}/models", timeout=5)`. If unreachable, print warning `"Warning: Agentic handler endpoint {_handler_cfg['api_base']} unreachable. Falling back to llm handler."` to stderr and set `_active_handler = "llm"`
-- [ ] T010 [US2] Update the startup banner "Listening" line in `voice_loop.py` to include `handler: {_active_handler}` per the CLI schema contract
+- [x] T007 [US1] After argparse in `voice_loop.py` main(), resolve handler config: load via `load_handler_config()`, validate `args.handler` is a known handler name (print error listing available handlers and exit if not). Set `_active_handler = args.handler`. Store the resolved handler config in `_handler_cfg`
+- [x] T008 [US1] Replace all calls to `llm_generate()` in `voice_loop.py` with `generate_response()`. This includes: the greeting call (~line 891), `process_utterance()` call, and the memory helper functions (`_run_memory()`). The `llm_generate` name can be kept as an alias for the `llm` handler closure internally
+- [x] T009 [US2] Add startup validation for the agentic handler in `voice_loop.py` main(): if `_active_handler == "agentic"`, try `urllib.request.urlopen(f"{_handler_cfg['api_base']}/models", timeout=5)`. If unreachable, print warning `"Warning: Agentic handler endpoint {_handler_cfg['api_base']} unreachable. Falling back to llm handler."` to stderr and set `_active_handler = "llm"`
+- [x] T010 [US2] Update the startup banner "Listening" line in `voice_loop.py` to include `handler: {_active_handler}` per the CLI schema contract
 - [ ] T011 [US1] Validate English regression: run `uv run voice_loop.py` without `--handler`, confirm identical behavior to pre-feature version (same LLM endpoint, same response flow, no warnings)
 - [ ] T012 [US2] Validate agentic handler: run `uv run voice_loop.py --handler agentic` with an agentic service running on port 8089, speak a question, confirm response comes from the agentic service and is spoken via TTS
 - [ ] T013 [US2] Validate agentic fallback: run `uv run voice_loop.py --handler agentic` with NO agentic service running, confirm warning is printed at startup and the system falls back to the LLM handler. Also confirm that mid-session timeout and empty responses are handled gracefully (no crash, no TTS, continue listening)
@@ -64,7 +64,7 @@
 
 ### Implementation
 
-- [ ] T014 [US3] Implement `_print_handler_table()` function in `voice_loop.py`: load handler config, print a formatted table with columns `Handler` and `Description` (per CLI schema contract). Mark the default handler with ` (default)`
+- [x] T014 [US3] Implement `_print_handler_table()` function in `voice_loop.py`: load handler config, print a formatted table with columns `Handler` and `Description` (per CLI schema contract). Mark the default handler with ` (default)`
 - [ ] T015 [US3] Validate: run `uv run voice_loop.py --list-handlers`, confirm output shows `llm` and `agentic` with descriptions, then exits without loading models
 
 **Checkpoint**: Handler discoverability complete
@@ -75,9 +75,9 @@
 
 **Purpose**: Documentation and consistency
 
-- [ ] T016 [P] Update `README.md` with `--handler` and `--list-handlers` usage examples, and add a `handlers` section to config.yaml documentation
-- [ ] T017 Update `AGENTS.md` to mention `--handler` flag and the `handlers` config section
-- [ ] T018 Verify constitution v1.1.1 Technology Constraints still accurately describe the project (add response handler mention if needed)
+- [x] T016 [P] Update `README.md` with `--handler` and `--list-handlers` usage examples, and add a `handlers` section to config.yaml documentation
+- [x] T017 Update `AGENTS.md` to mention `--handler` flag and the `handlers` config section
+- [x] T018 Verify constitution v1.1.1 Technology Constraints still accurately describe the project (add response handler mention if needed)
 
 ---
 

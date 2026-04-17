@@ -200,6 +200,16 @@ _LANG_MAP = {
     "de": {"tts_voice": "af_heart", "tts_lang": "de", "llm_language": "German"},
 }
 
+_HANDLER_DEFAULTS = {
+    "llm": {"description": "Direct LLM API call (default)"},
+    "agentic": {
+        "description": "External agentic service (configurable endpoint)",
+        "api_base": "http://localhost:8089/v1",
+        "model": "agentic",
+        "timeout": 60,
+    },
+}
+
 
 def load_model_aliases(config_path=None):
     path = Path(config_path) if config_path else _DIR / "config.yaml"
@@ -254,6 +264,27 @@ def resolve_language(lang_code):
         "tts_lang": lang_code,
         "llm_language": lang_code,
     }
+
+
+def load_handler_config():
+    handlers = {}
+    for name, defaults in _HANDLER_DEFAULTS.items():
+        handlers[name] = dict(defaults)
+    config_path = _DIR / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(config_path.read_text())
+            if data and "handlers" in data:
+                for name, entry in data["handlers"].items():
+                    if name in handlers:
+                        handlers[name].update(entry)
+                    else:
+                        handlers[name] = entry
+        except Exception:
+            pass
+    return handlers
 
 
 def check_linux_deps():
@@ -312,6 +343,17 @@ def _print_language_table():
         print(f"{name:<12} {code:<6} {stt:<10} {voice_list}")
     print(f"\nTotal: {len(voices)} voices across {len(by_prefix)} languages")
     print("faster-whisper supports 99+ languages for transcription")
+
+
+def _print_handler_table():
+    handlers = load_handler_config()
+    print(f"{'Handler':<12} Description")
+    print("-" * 50)
+    for name in sorted(handlers.keys()):
+        desc = handlers[name].get("description", "")
+        if name == "llm" and "(default)" not in desc:
+            desc += " (default)"
+        print(f"{name:<12} {desc}")
 
 
 def main():
@@ -391,6 +433,21 @@ def main():
         help="Device for faster-whisper inference (default: cpu)",
     )
     ap.add_argument(
+        "--handler",
+        default="llm",
+        help="Response generation handler (default: llm)",
+    )
+    ap.add_argument(
+        "--list-handlers",
+        action="store_true",
+        help="List available response handlers and exit",
+    )
+    ap.add_argument(
+        "--offline",
+        action="store_true",
+        help="Skip all network access, use only cached models (default: off)",
+    )
+    ap.add_argument(
         "--list",
         action="store_true",
         help="List available TTS voices by language and exit",
@@ -399,6 +456,11 @@ def main():
     if args.list:
         _print_language_table()
         sys.exit(0)
+    if args.list_handlers:
+        _print_handler_table()
+        sys.exit(0)
+    if args.offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
     if args.audio_mode and IS_LINUX:
         print(
             "Error: --audio-mode is not supported on Linux (requires MLX multimodal input)."
@@ -428,6 +490,15 @@ def main():
 
     if args.voice is None:
         args.voice = _lang_cfg["tts_voice"]
+
+    _handler_cfg = load_handler_config()
+    _active_handler = args.handler
+    if _active_handler not in _handler_cfg:
+        print(
+            f"Error: Unknown handler '{_active_handler}'. "
+            f"Available: {', '.join(sorted(_handler_cfg.keys()))}."
+        )
+        sys.exit(1)
 
     print("Loading Silero VAD...", flush=True)
     from silero_vad import load_silero_vad
@@ -507,6 +578,19 @@ def main():
             print(f"Error checking inference API: ({type(exc).__name__}: {exc})")
             sys.exit(1)
         print(f"  Using {_llm_model} via {_llm_api_base}", flush=True)
+    if _active_handler == "agentic":
+        _agentic_api = _handler_cfg.get("agentic", {}).get(
+            "api_base", "http://localhost:8089/v1"
+        )
+        try:
+            urllib.request.urlopen(f"{_agentic_api}/models", timeout=5)
+        except Exception:
+            print(
+                f"Warning: Agentic handler endpoint {_agentic_api} unreachable. "
+                "Falling back to llm handler.",
+                file=sys.stderr,
+            )
+            _active_handler = "llm"
     smart_turn = load_smart_turn() if args.smart_turn else None
     kokoro = None
     if args.tts:
@@ -612,7 +696,7 @@ def main():
             if l.text
         ).strip()
 
-    def llm_generate(messages, max_tokens=200, temperature=0.7, **kwargs):
+    def _llm_handler(messages, max_tokens=200, temperature=0.7, **kwargs):
         if IS_DARWIN:
             prompt = processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -645,6 +729,49 @@ def main():
             with urllib.request.urlopen(req, timeout=120) as resp:
                 result = json.loads(resp.read())
             return result["choices"][0]["message"].get("content", "") or ""
+
+    def _agentic_handler(messages, max_tokens=200, temperature=0.7, **kwargs):
+        cfg = _handler_cfg.get("agentic", {})
+        data = json.dumps(
+            {
+                "model": cfg.get("model", "agentic"),
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+        ).encode()
+        req = urllib.request.Request(
+            f"{cfg.get('api_base', 'http://localhost:8089/v1')}/chat/completions",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        timeout = cfg.get("timeout", 60)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result = json.loads(resp.read())
+        return result["choices"][0]["message"].get("content", "") or ""
+
+    _handlers = {"llm": _llm_handler, "agentic": _agentic_handler}
+
+    def generate_response(messages, max_tokens=200, temperature=0.7, **kwargs):
+        nonlocal _active_handler
+        try:
+            return _handlers[_active_handler](
+                messages, max_tokens=max_tokens, temperature=temperature, **kwargs
+            )
+        except Exception as exc:
+            if _active_handler != "llm":
+                print(
+                    f"Warning: {_active_handler} handler failed ({exc}). "
+                    "Falling back to llm handler for this session.",
+                    file=sys.stderr,
+                )
+                _active_handler = "llm"
+                return _handlers["llm"](
+                    messages, max_tokens=max_tokens, temperature=temperature, **kwargs
+                )
+            raise
+
+    llm_generate = generate_response
 
     def speak_tts(text):
         if not text or not text.strip():
@@ -871,7 +998,7 @@ def main():
 
     mode = "audio" if args.audio_mode else "text"
     print(
-        f"\nListening (lang: {args.lang}, stt: {_stt_backend}, tts: {args.voice}, "
+        f"\nListening (lang: {args.lang}, stt: {_stt_backend}, tts: {args.voice}, handler: {_active_handler}, "
         f"mode: {mode}, silence: {args.silence_ms}ms, smart-turn: {args.smart_turn})"
     )
     tts_hint = (

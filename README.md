@@ -83,6 +83,12 @@ uv run voice_loop.py --silence-ms 500
 
 # Debug: record mic stream to a WAV
 uv run voice_loop.py --record
+
+# Use an agentic handler (e.g. Hermes-agent on port 8089)
+uv run voice_loop.py --handler agentic
+
+# List available response handlers
+uv run voice_loop.py --list-handlers
 ```
 
 ## Recommended Kokoro voices
@@ -183,6 +189,14 @@ Changes on top of the upstream [TrelisResearch/voice-loop](https://github.com/Tr
 - **LLM API timeout** — 120-second timeout on inference requests to prevent indefinite hangs.
 - **`config.yaml` overrides** — `languages` section lets users override built-in TTS voices and language mappings.
 - **Error handling** — clear errors for unsupported Moonshine+language combinations; actionable messages for missing faster-whisper or unreachable servers.
+
+### Pluggable response handler (`003-pluggable-response-handler` branch)
+
+- **`--handler` flag** — selects the response generation backend (`llm` for direct API call, `agentic` for external agent service). Default is `llm`.
+- **Agentic handler** — delegates response generation to an external agentic service (OpenAI-compatible API) at a configurable endpoint (`http://localhost:8089/v1` by default). Waits for full response; chime/ticks provide audible feedback during processing.
+- **Automatic fallback** — if the agentic endpoint is unreachable or times out (60s), the system prints a warning and falls back to the `llm` handler for the session.
+- **`--list-handlers` flag** — shows all available response handlers with descriptions.
+- **`config.yaml` handlers section** — configure agentic endpoint URL, model name, and timeout.
 
 ## License
 

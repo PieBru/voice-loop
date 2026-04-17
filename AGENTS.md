@@ -16,12 +16,14 @@
 - **Sacred audio constants**: 16 kHz mono, 512-sample chunks (32 ms). Do not change sample rates or buffer sizes without end-to-end validation.
 - **Configuration**: `config.yaml` at project root for user-tunable settings (model aliases, language settings). Built-in defaults used when absent.
 - **Multilanguage**: `--lang` flag sets language for the full pipeline (STT + LLM + TTS). `--stt` flag selects STT backend (`whisper` or `moonshine`; auto-selected if omitted). Default language is `en` (English).
+- **Response handler**: `--handler` flag selects the response generation backend (`llm` for direct API call, `agentic` for external agent service). Default is `llm`. `--list-handlers` shows available handlers. Handler config in `config.yaml` → `handlers` section.
 
 ## How to Change Behavior
 
 1. **Persona/style**: edit `SOUL.md` (live-reloaded every turn).
 2. **Model aliases**: edit `config.yaml` (loaded at startup).
 3. **Language/STT backend**: use `--lang` and `--stt` CLI flags; defaults preserve English-only behavior.
+4. **Response handler**: use `--handler` CLI flag; default is `llm`. Configure agentic endpoint in `config.yaml` → `handlers`.
 4. **New capability**: add a CLI flag in `voice_loop.py` before hard-coding behavior. Every new feature MUST be disable-able at runtime.
 5. **Memory**: enable with `--memory`; `MEMORY.md` is gitignored user-local state.
 

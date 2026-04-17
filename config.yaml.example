@@ -27,3 +27,9 @@ languages:
     tts_voice: af_heart
     tts_lang: de
     llm_language: German
+
+handlers:
+  agentic:
+    api_base: http://localhost:8089/v1
+    model: agent-model-name
+    timeout: 60
