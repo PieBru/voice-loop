@@ -33,3 +33,7 @@ handlers:
     api_base: http://localhost:8089/v1
     model: agent-model-name
     timeout: 60
+  zeroclaw:
+    api_base: http://127.0.0.1:42617
+    token: ""  # Bearer token from `zeroclaw gateway` pairing
+    timeout: 120

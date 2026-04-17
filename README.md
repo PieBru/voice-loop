@@ -87,8 +87,69 @@ uv run voice_loop.py --record
 # Use an agentic handler (e.g. Hermes-agent on port 8089)
 uv run voice_loop.py --handler agentic
 
+# Use ZeroClaw personal AI assistant
+uv run voice_loop.py --handler zeroclaw
+
 # List available response handlers
 uv run voice_loop.py --list-handlers
+```
+
+## ZeroClaw Integration
+
+[ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) is a fast, fully autonomous AI assistant written in Rust. It supports tool use, multi-step reasoning, and 70+ integrations out of the box.
+
+### Install on Arch Linux
+
+```bash
+# Option A: Pre-built binary (recommended)
+curl -LO https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/zeroclaw-linux-x86_64.tar.gz
+tar xzf zeroclaw-linux-x86_64.tar.gz
+sudo mv zeroclaw /usr/local/bin/
+
+# Option B: Build from source (requires Rust toolchain)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+git clone https://github.com/zeroclaw-labs/zeroclaw.git
+cd zeroclaw
+cargo build --release --locked
+sudo cp target/release/zeroclaw /usr/local/bin/
+
+# Option C: One-line installer
+curl -LsSf https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh | bash
+```
+
+### Configure ZeroClaw
+
+```bash
+# Interactive setup (provider, channels, etc.)
+zeroclaw onboard
+
+# Edit config: set your LLM provider and API key
+# Config file: ~/.zeroclaw/config.toml
+```
+
+### Run Voice Loop with ZeroClaw
+
+```bash
+# Terminal 1: Start ZeroClaw gateway
+zeroclaw gateway
+
+# Terminal 2: Start Voice Loop with ZeroClaw handler
+uv run voice_loop.py --handler zeroclaw
+```
+
+If the ZeroClaw gateway is not running when Voice Loop starts, it falls back to the direct LLM handler with a warning.
+
+### ZeroClaw Handler Configuration
+
+Add to `config.yaml` to customize:
+
+```yaml
+handlers:
+  zeroclaw:
+    api_base: http://127.0.0.1:42617
+    token: ""  # Bearer token from `zeroclaw gateway` pairing (optional if pairing is disabled)
+    timeout: 120
 ```
 
 ## Recommended Kokoro voices
@@ -192,11 +253,13 @@ Changes on top of the upstream [TrelisResearch/voice-loop](https://github.com/Tr
 
 ### Pluggable response handler (`003-pluggable-response-handler` branch)
 
-- **`--handler` flag** — selects the response generation backend (`llm` for direct API call, `agentic` for external agent service). Default is `llm`.
+- **`--handler` flag** — selects the response generation backend (`llm` for direct API call, `agentic` for external agent service, `zeroclaw` for ZeroClaw). Default is `llm`.
 - **Agentic handler** — delegates response generation to an external agentic service (OpenAI-compatible API) at a configurable endpoint (`http://localhost:8089/v1` by default). Waits for full response; chime/ticks provide audible feedback during processing.
-- **Automatic fallback** — if the agentic endpoint is unreachable or times out (60s), the system prints a warning and falls back to the `llm` handler for the session.
+- **ZeroClaw handler** — delegates to [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) personal AI assistant via its webhook API (`http://127.0.0.1:42617` by default). Supports tool use, multi-step reasoning, and 70+ integrations.
+- **Automatic fallback** — if the selected handler endpoint is unreachable or times out, the system prints a warning and falls back to the `llm` handler for the session.
 - **`--list-handlers` flag** — shows all available response handlers with descriptions.
-- **`config.yaml` handlers section** — configure agentic endpoint URL, model name, and timeout.
+- **`--offline` flag** — sets `HF_HUB_OFFLINE=1` for fully offline operation after first model download.
+- **`config.yaml` handlers section** — configure endpoint URL, model name, token, and timeout per handler.
 
 ## License
 

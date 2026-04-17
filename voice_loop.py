@@ -208,6 +208,12 @@ _HANDLER_DEFAULTS = {
         "model": "agentic",
         "timeout": 60,
     },
+    "zeroclaw": {
+        "description": "ZeroClaw personal AI assistant (webhook)",
+        "api_base": "http://127.0.0.1:42617",
+        "token": "",
+        "timeout": 120,
+    },
 }
 
 
@@ -594,6 +600,19 @@ def main():
                 file=sys.stderr,
             )
             _active_handler = "llm"
+    if _active_handler == "zeroclaw":
+        _zc_api = _handler_cfg.get("zeroclaw", {}).get(
+            "api_base", "http://127.0.0.1:42617"
+        )
+        try:
+            urllib.request.urlopen(f"{_zc_api}/status", timeout=5)
+        except Exception:
+            print(
+                f"Warning: ZeroClaw gateway {_zc_api} unreachable. "
+                "Falling back to llm handler.",
+                file=sys.stderr,
+            )
+            _active_handler = "llm"
     smart_turn = load_smart_turn() if args.smart_turn else None
     kokoro = None
     if args.tts:
@@ -753,7 +772,37 @@ def main():
             result = json.loads(resp.read())
         return result["choices"][0]["message"].get("content", "") or ""
 
-    _handlers = {"llm": _llm_handler, "agentic": _agentic_handler}
+    def _zeroclaw_handler(messages, max_tokens=200, temperature=0.7, **kwargs):
+        cfg = _handler_cfg.get("zeroclaw", {})
+        user_msg = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                user_msg = m.get("content", "")
+                break
+        if not user_msg:
+            user_msg = messages[-1].get("content", "") if messages else ""
+        payload = json.dumps({"message": user_msg, "max_tokens": max_tokens}).encode()
+        headers = {"Content-Type": "application/json"}
+        token = cfg.get("token", "")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(
+            f"{cfg.get('api_base', 'http://127.0.0.1:42617')}/webhook",
+            data=payload,
+            headers=headers,
+        )
+        timeout = cfg.get("timeout", 120)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read())
+        if isinstance(body, dict):
+            return body.get("response", body.get("message", body.get("content", "")))
+        return str(body)
+
+    _handlers = {
+        "llm": _llm_handler,
+        "agentic": _agentic_handler,
+        "zeroclaw": _zeroclaw_handler,
+    }
 
     def generate_response(messages, max_tokens=200, temperature=0.7, **kwargs):
         nonlocal _active_handler
