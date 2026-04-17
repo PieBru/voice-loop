@@ -103,6 +103,12 @@ uv run voice_loop.py --tts qwen --voice Vivian
 
 # List QwenTTS speakers
 uv run voice_loop.py --list --tts qwen
+
+# QwenTTS via C++ subprocess (works on macOS/Linux/RPi)
+uv run voice_loop.py --tts qwen-cpp
+
+# List qwen-cpp config and install instructions
+uv run voice_loop.py --list --tts qwen-cpp
 ```
 
 ## ZeroClaw Integration
@@ -197,6 +203,52 @@ handlers:
 ### Built-in Speakers
 
 9 speakers: `Chelsie`, `Dylan`, `Eric`, `Ono_Anna`, `Aiden`, `Ryan`, `Serena`, `Sohee`, `Vivian`. Override with `--voice <SpeakerName>`.
+
+## QwenTTS C++ Backend (`--tts qwen-cpp`)
+
+Uses [qwen3-tts.cpp](https://github.com/predict-woo/qwen3-tts.cpp) — a C++ inference engine built on GGML. Runs the 0.6B model on **CPU, CUDA, or Apple Metal**. No PyTorch required.
+
+### When to use
+
+- You want QwenTTS quality but don't have a CUDA GPU (macOS, RPi, CPU-only Linux)
+- You want lower memory usage (~1.2GB vs ~8GB for the Python backend)
+- You want voice cloning from a reference audio clip
+
+### Install
+
+```bash
+git clone https://github.com/predict-woo/qwen3-tts.cpp
+cd qwen3-tts.cpp && git submodule update --init --recursive
+
+# Build GGML (Metal on macOS, CUDA on Linux)
+cmake -S ggml -B ggml/build -DGGML_METAL=ON   # or -DGGML_CUDA=ON
+cmake --build ggml/build -j$(nproc)
+
+# Build the CLI
+cmake -S . -B build && cmake --build build -j$(nproc)
+
+# Download and convert models (one-time, ~1.2GB)
+uv venv .venv && source .venv/bin/activate
+uv pip install huggingface_hub gguf torch safetensors numpy tqdm
+python scripts/setup_pipeline_models.py
+```
+
+### Configure
+
+Add to `config.yaml`:
+
+```yaml
+tts:
+  qwen_cpp_bin: /path/to/qwen3-tts.cpp/build/qwen3-tts-cli
+  qwen_cpp_model_dir: /path/to/qwen3-tts.cpp/models
+  qwen_cpp_ref_audio: /path/to/reference.wav  # optional: for voice cloning
+```
+
+### Limitations
+
+- **No streaming**: full synthesis then playback (same as Python QwenTTS)
+- **No built-in speakers**: voice cloning from reference audio only. Without reference audio, uses a generic default voice.
+- **0.6B model only**: lower quality than the 1.7B Python backend
 
 ## Recommended Kokoro voices
 

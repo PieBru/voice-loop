@@ -31,6 +31,9 @@ languages:
 tts:
   qwen_model: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
   qwen_device: cuda:0
+  qwen_cpp_bin: qwen3-tts-cli  # or absolute path
+  qwen_cpp_model_dir: /path/to/qwen3-tts.cpp/models
+  qwen_cpp_ref_audio: ""  # optional: WAV file for voice cloning
 
 handlers:
   agentic:

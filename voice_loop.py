@@ -403,6 +403,64 @@ def _print_handler_table():
         print(f"{name:<12} {desc}")
 
 
+def _load_qwen_cpp_config():
+    cfg = {"bin": "qwen3-tts-cli", "model_dir": None, "ref_audio": None}
+    config_path = _DIR / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(config_path.read_text())
+            if data and "tts" in data:
+                tts = data["tts"]
+                cfg["bin"] = tts.get("qwen_cpp_bin", cfg["bin"])
+                cfg["model_dir"] = tts.get("qwen_cpp_model_dir", cfg["model_dir"])
+                cfg["ref_audio"] = tts.get("qwen_cpp_ref_audio", cfg["ref_audio"])
+        except Exception:
+            pass
+    return cfg
+
+
+def _find_qwen_cpp_bin(cfg):
+    import shutil
+
+    bin_path = cfg.get("bin") or "qwen3-tts-cli"
+    if os.path.isabs(bin_path) and os.path.isfile(bin_path):
+        return bin_path
+    found = shutil.which(bin_path)
+    if found:
+        return found
+    return None
+
+
+def _print_qwen_cpp_info():
+    cfg = _load_qwen_cpp_config()
+    print("QwenTTS C++ Backend (qwen3-tts.cpp)")
+    print("=" * 50)
+    print(f"  Binary:     {cfg['bin']}")
+    print(f"  Model dir:  {cfg['model_dir'] or '(not configured)'}")
+    print(
+        f"  Ref audio:  {cfg['ref_audio'] or '(not configured — uses default voice)'}"
+    )
+    print()
+    print("Install:")
+    print("  git clone https://github.com/predict-woo/qwen3-tts.cpp")
+    print("  cd qwen3-tts.cpp && git submodule update --init --recursive")
+    print("  cmake -S ggml -B ggml/build -DGGML_METAL=ON  # or -DGGML_CUDA=ON")
+    print("  cmake --build ggml/build -j$(nproc)")
+    print("  cmake -S . -B build && cmake --build build -j$(nproc)")
+    print("  uv venv .venv && source .venv/bin/activate")
+    print("  uv pip install huggingface_hub gguf torch safetensors numpy tqdm")
+    print("  python scripts/setup_pipeline_models.py")
+    print("  # Add to PATH or set tts.qwen_cpp_bin in config.yaml")
+    print()
+    print("config.yaml example:")
+    print("  tts:")
+    print("    qwen_cpp_bin: /path/to/qwen3-tts-cli")
+    print("    qwen_cpp_model_dir: /path/to/qwen3-tts.cpp/models")
+    print("    qwen_cpp_ref_audio: /path/to/reference.wav")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Voice Loop — a minimal on-device voice agent"
@@ -485,7 +543,7 @@ def main():
     ap.add_argument(
         "--tts",
         default="kokoro",
-        choices=["kokoro", "qwen"],
+        choices=["kokoro", "qwen", "qwen-cpp"],
         help="TTS backend (default: kokoro)",
     )
     ap.add_argument(
@@ -510,11 +568,15 @@ def main():
     )
     args = ap.parse_args()
     if args.tts == "qwen" and IS_DARWIN:
-        print("Error: --tts qwen requires CUDA (Linux NVIDIA GPU only).")
+        print(
+            "Error: --tts qwen requires CUDA (Linux NVIDIA GPU only). Use --tts qwen-cpp for macOS."
+        )
         sys.exit(1)
     if args.list:
         if args.tts == "qwen":
             _print_qwen_speaker_table()
+        elif args.tts == "qwen-cpp":
+            _print_qwen_cpp_info()
         else:
             _print_language_table()
         sys.exit(0)
@@ -572,6 +634,32 @@ def main():
             f"Available: {', '.join(sorted(_handler_cfg.keys()))}."
         )
         sys.exit(1)
+
+    _qwen_cpp_cfg = _load_qwen_cpp_config() if args.tts == "qwen-cpp" else None
+    _qwen_cpp_bin = None
+    if args.tts == "qwen-cpp" and args.tts_enabled:
+        _qwen_cpp_bin = _find_qwen_cpp_bin(_qwen_cpp_cfg)
+        if not _qwen_cpp_bin:
+            print(
+                "Error: qwen3-tts-cli not found.\n"
+                "Install qwen3-tts.cpp: https://github.com/predict-woo/qwen3-tts.cpp\n"
+                "Then add to PATH or set tts.qwen_cpp_bin in config.yaml."
+            )
+            sys.exit(1)
+        model_dir = _qwen_cpp_cfg.get("model_dir")
+        if not model_dir:
+            print(
+                "Error: tts.qwen_cpp_model_dir not set in config.yaml.\n"
+                "Set it to the directory containing your GGUF model files."
+            )
+            sys.exit(1)
+        print(f"  QwenTTS C++ backend: {_qwen_cpp_bin}", flush=True)
+        print(f"  Model dir: {model_dir}", flush=True)
+        ref = _qwen_cpp_cfg.get("ref_audio")
+        if ref:
+            print(f"  Reference audio: {ref}", flush=True)
+        else:
+            print("  No reference audio — using default voice", flush=True)
 
     print("Loading Silero VAD...", flush=True)
     from silero_vad import load_silero_vad
@@ -924,6 +1012,41 @@ def main():
             )
             sd.play(wavs[0], sr)
             sd.wait()
+        elif _qwen_cpp_bin:
+            import subprocess as _sp
+            import soundfile as _sf
+
+            try:
+                tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                tmp_path = tmp.name
+                tmp.close()
+                cmd = [
+                    _qwen_cpp_bin,
+                    "-m",
+                    _qwen_cpp_cfg["model_dir"],
+                    "-t",
+                    text,
+                    "-o",
+                    tmp_path,
+                ]
+                ref = _qwen_cpp_cfg.get("ref_audio")
+                if ref:
+                    cmd.extend(["-r", ref])
+                _sp.run(cmd, capture_output=True, timeout=120, check=True)
+                samples, sr = _sf.read(tmp_path)
+                sd.play(samples, sr)
+                sd.wait()
+            except _sp.CalledProcessError as e:
+                print(f"  [qwen-cpp error: {e.stderr.decode()[:200]}]", file=sys.stderr)
+            except _sp.TimeoutExpired:
+                print("  [qwen-cpp timeout: synthesis took >120s]", file=sys.stderr)
+            except Exception as e:
+                print(f"  [qwen-cpp error: {e}]", file=sys.stderr)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
 
     _mem_path = _DIR / "MEMORY.md"
 
@@ -1114,7 +1237,7 @@ def main():
             if response:
                 if kokoro:
                     play_tts_stream(response)
-                elif qwen_tts_model:
+                elif qwen_tts_model or _qwen_cpp_bin:
                     speak_tts(response)
                 elif chime_sound is not None:
                     _wait_for_chime_gap()
@@ -1176,7 +1299,7 @@ def main():
         max_tokens=512,
     )
     print(f"> {greeting}\n", flush=True)
-    if kokoro or qwen_tts_model:
+    if kokoro or qwen_tts_model or _qwen_cpp_bin:
         speak_tts(greeting)
 
     with sd.InputStream(
