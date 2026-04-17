@@ -28,6 +28,10 @@ languages:
     tts_lang: de
     llm_language: German
 
+tts:
+  qwen_model: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+  qwen_device: cuda:0
+
 handlers:
   agentic:
     api_base: http://localhost:8089/v1

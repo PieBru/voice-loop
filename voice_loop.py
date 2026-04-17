@@ -10,6 +10,7 @@ Usage:
     uv run voice_loop.py                        # defaults (TTS + smart turn + AEC)
     uv run voice_loop.py --lang it              # Italian (Whisper STT + Italian TTS)
     uv run voice_loop.py --lang es              # Spanish (Moonshine STT + Spanish TTS)
+    uv run voice_loop.py --tts qwen             # Qwen3-TTS (CUDA, higher quality)
     uv run voice_loop.py --no-tts               # text out only
     uv run voice_loop.py --no-aec               # keypress interrupt only
     uv run voice_loop.py --chime                # chime + ticks while generating
@@ -200,6 +201,33 @@ _LANG_MAP = {
     "de": {"tts_voice": "af_heart", "tts_lang": "de", "llm_language": "German"},
 }
 
+_QWEN_SPEAKER_MAP = {
+    "en": {"speaker": "Ryan", "language": "English"},
+    "zh": {"speaker": "Vivian", "language": "Chinese"},
+    "ja": {"speaker": "Ono_Anna", "language": "Japanese"},
+    "ko": {"speaker": "Sohee", "language": "Korean"},
+    "es": {"speaker": "Ryan", "language": "Spanish"},
+    "fr": {"speaker": "Ryan", "language": "French"},
+    "it": {"speaker": "Ryan", "language": "Italian"},
+    "pt": {"speaker": "Ryan", "language": "Portuguese"},
+    "de": {"speaker": "Ryan", "language": "German"},
+    "ru": {"speaker": "Ryan", "language": "Russian"},
+}
+
+_QWEN_TTS_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+
+
+def _patch_qwen_tts_compat():
+    import transformers.utils.generic as _g
+
+    _orig = _g.check_model_inputs
+
+    def _wrapper(func=None):
+        return _orig(func) if func is not None else _orig
+
+    _g.check_model_inputs = _wrapper
+
+
 _HANDLER_DEFAULTS = {
     "llm": {"description": "Direct LLM API call (default)"},
     "agentic": {
@@ -351,6 +379,19 @@ def _print_language_table():
     print("faster-whisper supports 99+ languages for transcription")
 
 
+def _print_qwen_speaker_table():
+    print(f"{'Lang':<12} {'Code':<6} {'Speaker':<12} Language Name")
+    print("-" * 60)
+    for code in sorted(_QWEN_SPEAKER_MAP.keys()):
+        info = _QWEN_SPEAKER_MAP[code]
+        native = {"en": "English", "zh": "Chinese", "ja": "Japanese", "ko": "Korean"}
+        lang_name = native.get(code, f"{info['language']} (via Ryan)")
+        print(f"{lang_name:<12} {code:<6} {info['speaker']:<12} {info['language']}")
+    print(f"\nTotal: {len(_QWEN_SPEAKER_MAP)} language mappings")
+    print("CustomVoice model has 9 built-in speakers")
+    print("Use --voice <SpeakerName> to select a specific speaker")
+
+
 def _print_handler_table():
     handlers = load_handler_config()
     print(f"{'Handler':<12} Description")
@@ -369,8 +410,8 @@ def main():
     ap.add_argument(
         "--no-tts",
         action="store_false",
-        dest="tts",
-        help="Disable Kokoro TTS output",
+        dest="tts_enabled",
+        help="Disable TTS output",
     )
     ap.add_argument(
         "--no-smart-turn",
@@ -390,7 +431,7 @@ def main():
         dest="chime",
         help="Disable chime on utterance + soft ticks while generating",
     )
-    ap.set_defaults(tts=True, smart_turn=True, aec=True, chime=True)
+    ap.set_defaults(tts_enabled=True, smart_turn=True, aec=True, chime=True)
     ap.add_argument(
         "--memory",
         action="store_true",
@@ -427,7 +468,7 @@ def main():
     ap.add_argument(
         "--voice",
         default=None,
-        help="Kokoro voice (default: language-appropriate voice, e.g. af_heart for English)",
+        help="TTS voice/speaker (default: language-appropriate)",
     )
     ap.add_argument(
         "--stt",
@@ -440,6 +481,12 @@ def main():
         default="cpu",
         choices=["cpu", "cuda"],
         help="Device for faster-whisper inference (default: cpu)",
+    )
+    ap.add_argument(
+        "--tts",
+        default="kokoro",
+        choices=["kokoro", "qwen"],
+        help="TTS backend (default: kokoro)",
     )
     ap.add_argument(
         "--handler",
@@ -462,8 +509,14 @@ def main():
         help="List available TTS voices by language and exit",
     )
     args = ap.parse_args()
+    if args.tts == "qwen" and IS_DARWIN:
+        print("Error: --tts qwen requires CUDA (Linux NVIDIA GPU only).")
+        sys.exit(1)
     if args.list:
-        _print_language_table()
+        if args.tts == "qwen":
+            _print_qwen_speaker_table()
+        else:
+            _print_language_table()
         sys.exit(0)
     if args.list_handlers:
         _print_handler_table()
@@ -498,7 +551,18 @@ def main():
         sys.exit(1)
 
     if args.voice is None:
-        args.voice = _lang_cfg["tts_voice"]
+        if args.tts == "qwen":
+            qinfo = _QWEN_SPEAKER_MAP.get(args.lang)
+            if qinfo:
+                args.voice = qinfo["speaker"]
+            else:
+                print(
+                    f"Warning: No QwenTTS speaker for '{args.lang}', using Ryan.",
+                    file=sys.stderr,
+                )
+                args.voice = "Ryan"
+        else:
+            args.voice = _lang_cfg["tts_voice"]
 
     _handler_cfg = load_handler_config()
     _active_handler = args.handler
@@ -615,7 +679,9 @@ def main():
             _active_handler = "llm"
     smart_turn = load_smart_turn() if args.smart_turn else None
     kokoro = None
-    if args.tts:
+    qwen_tts_model = None
+    qwen_tts_tokenizer = None
+    if args.tts == "kokoro" and args.tts_enabled:
         print("Loading Kokoro TTS...", flush=True)
         import subprocess
 
@@ -645,6 +711,20 @@ def main():
             urllib.request.urlretrieve(f"{base}/kokoro-v1.0.onnx", model_file)
             urllib.request.urlretrieve(f"{base}/voices-v1.0.bin", voices_file)
         kokoro = Kokoro(model_file, voices_file)
+    elif args.tts == "qwen" and args.tts_enabled:
+        print("Loading QwenTTS...", flush=True)
+        _patch_qwen_tts_compat()
+        from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
+
+        print(f"  Loading {_QWEN_TTS_MODEL_ID} (~3.4GB on first run)...", flush=True)
+        qwen_tts_tokenizer = Qwen3TTSTokenizer.from_pretrained(_QWEN_TTS_MODEL_ID)
+        qwen_tts_model = Qwen3TTSModel.from_pretrained(
+            _QWEN_TTS_MODEL_ID,
+            device_map="cuda:0",
+            dtype=torch.bfloat16,
+        )
+        speakers = qwen_tts_model.get_supported_speakers()
+        print(f"  QwenTTS loaded: {len(speakers)} speakers", flush=True)
 
     make_aec_processor = None
     if args.aec:
@@ -828,11 +908,22 @@ def main():
     def speak_tts(text):
         if not text or not text.strip():
             return
-        samples, sr = kokoro.create(
-            text, voice=args.voice, speed=1.0, lang=_lang_cfg["tts_lang"]
-        )
-        sd.play(samples, sr)
-        sd.wait()
+        if kokoro:
+            samples, sr = kokoro.create(
+                text, voice=args.voice, speed=1.0, lang=_lang_cfg["tts_lang"]
+            )
+            sd.play(samples, sr)
+            sd.wait()
+        elif qwen_tts_model:
+            qinfo = _QWEN_SPEAKER_MAP.get(args.lang, {})
+            wavs, sr = qwen_tts_model.generate_custom_voice(
+                text=text,
+                language=qinfo.get("language", "English"),
+                speaker=args.voice,
+                non_streaming_mode=True,
+            )
+            sd.play(wavs[0], sr)
+            sd.wait()
 
     _mem_path = _DIR / "MEMORY.md"
 
@@ -1020,11 +1111,14 @@ def main():
                 heard = transcribe_future.result(timeout=10)
                 print(f"  [{heard}]")
             print(f"\n> {response}\n", flush=True)
-            if kokoro and response:
-                play_tts_stream(response)
-            elif chime_sound is not None:
-                _wait_for_chime_gap()
-                sd.stop()
+            if response:
+                if kokoro:
+                    play_tts_stream(response)
+                elif qwen_tts_model:
+                    speak_tts(response)
+                elif chime_sound is not None:
+                    _wait_for_chime_gap()
+                    sd.stop()
             history.append({"user": heard, "assistant": response})
             if len(history) > MAX_HISTORY:
                 history.pop(0)
@@ -1050,7 +1144,7 @@ def main():
 
     mode = "audio" if args.audio_mode else "text"
     print(
-        f"\nListening (lang: {args.lang}, stt: {_stt_backend}, tts: {args.voice}, handler: {_active_handler}, "
+        f"\nListening (lang: {args.lang}, stt: {_stt_backend}, tts: {args.tts}/{args.voice}, handler: {_active_handler}, "
         f"mode: {mode}, silence: {args.silence_ms}ms, smart-turn: {args.smart_turn})"
     )
     tts_hint = (
@@ -1059,7 +1153,7 @@ def main():
             if args.aec
             else " Press any key to interrupt TTS."
         )
-        if args.tts
+        if args.tts_enabled
         else ""
     )
     print(f"Speak into your microphone. Ctrl+C to quit.{tts_hint}\n", flush=True)
@@ -1082,7 +1176,7 @@ def main():
         max_tokens=512,
     )
     print(f"> {greeting}\n", flush=True)
-    if kokoro:
+    if kokoro or qwen_tts_model:
         speak_tts(greeting)
 
     with sd.InputStream(

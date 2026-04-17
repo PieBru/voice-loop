@@ -16,7 +16,7 @@ A minimal on-device voice agent loop. Runs entirely on macOS (Apple Silicon) and
 
 - **Moonshine** (CPU) or **faster-whisper** (CPU/CUDA) for speech-to-text transcription
 - **Gemma 4 E4B** (MLX/Metal on macOS, llama.cpp/CUDA on Linux) for response generation
-- **Kokoro** (CPU) for TTS (streaming)
+- **Kokoro** (CPU) or **Qwen3-TTS** (CUDA) for TTS
 - **Silero VAD** + **Smart Turn v3** for turn detection
 - **WebRTC AEC3** (via LiveKit APM) for voice interruption
 
@@ -92,6 +92,15 @@ uv run voice_loop.py --handler zeroclaw
 
 # List available response handlers
 uv run voice_loop.py --list-handlers
+
+# Qwen3-TTS (higher quality, requires CUDA GPU with ≥8GB VRAM)
+uv run voice_loop.py --tts qwen
+
+# Qwen3-TTS with specific speaker
+uv run voice_loop.py --tts qwen --voice Vivian
+
+# List QwenTTS speakers
+uv run voice_loop.py --list --tts qwen
 ```
 
 ## ZeroClaw Integration
@@ -152,6 +161,41 @@ handlers:
     timeout: 120
 ```
 
+## Qwen3-TTS (Alternative TTS Backend)
+
+[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) is a neural TTS model that produces higher-quality speech than Kokoro, at the cost of requiring a CUDA GPU.
+
+### Requirements
+
+- Linux with NVIDIA CUDA GPU
+- ≥8 GB VRAM (1.7B model) or ≥4 GB VRAM (0.6B model, not yet supported)
+- First run downloads ~3.4 GB model from HuggingFace
+
+### Supported Languages
+
+| Code | Language | Default Speaker |
+|------|----------|----------------|
+| `en` | English | `Ryan` |
+| `zh` | Chinese | `Vivian` |
+| `ja` | Japanese | `Ono_Anna` |
+| `ko` | Korean | `Sohee` |
+| `es` | Spanish | `Ryan` |
+| `fr` | French | `Ryan` |
+| `it` | Italian | `Ryan` |
+| `pt` | Portuguese | `Ryan` |
+| `de` | German | `Ryan` |
+| `ru` | Russian | `Ryan` |
+
+### Limitations
+
+- **No streaming**: audio plays after full synthesis (no chunk-by-chunk playback like Kokoro)
+- **No AEC barge-in**: voice interruption is not available during QwenTTS synthesis. Keypress interrupt works during playback.
+- **macOS not supported**: requires CUDA
+
+### Built-in Speakers
+
+9 speakers: `Chelsie`, `Dylan`, `Eric`, `Ono_Anna`, `Aiden`, `Ryan`, `Serena`, `Sohee`, `Vivian`. Override with `--voice <SpeakerName>`.
+
 ## Recommended Kokoro voices
 
 Only the higher-quality voices are listed here:
@@ -185,11 +229,11 @@ Any ISO 639-1 code works for STT (99+ languages via Whisper). Only languages wit
 ## Architecture
 
 ```
-   Mic (16kHz) ──► Silero VAD ──► Smart Turn ──► Moonshine/Whisper ──► Gemma 4 E4B ──► Kokoro ──► Speakers
-                                                                    ▲                         │
-                                                        SOUL.md + MEMORY.md                   │
-                                                                                              ▼
-   Mic during TTS ──► WebRTC AEC3 (LiveKit APM) ──► Silero VAD ──► voice interrupt ◄──────────┘
+   Mic (16kHz) ──► Silero VAD ──► Smart Turn ──► Moonshine/Whisper ──► Gemma 4 E4B ──► Kokoro/QwenTTS ──► Speakers
+                                                                     ▲                              │
+                                                         SOUL.md + MEMORY.md                   │
+                                                                                                ▼
+   Mic during TTS ──► WebRTC AEC3 (LiveKit APM) ──► Silero VAD ──► voice interrupt ◄──────────────┘ (Kokoro only)
 ```
 
 ## How it works
@@ -199,7 +243,7 @@ Any ISO 639-1 code works for STT (99+ languages via Whisper). Only languages wit
 3. **Smart Turn** confirms end-of-turn on silence (default on)
 4. **Moonshine or faster-whisper** transcribes your audio to text (auto-selected per language)
 5. **Gemma 4 E4B** responds using SOUL.md (+ MEMORY.md if `--memory`) as system prompt
-6. **Kokoro** synthesizes speech, streams audio
+6. **Kokoro** synthesizes speech, streams audio (or **Qwen3-TTS** synthesizes full response then plays)
 7. **WebRTC AEC3** cleans mic during TTS playback → Silero VAD on cleaned audio → voice interrupt
 
 Press any key during TTS to interrupt.
@@ -213,7 +257,7 @@ Both files are re-read at the start of every turn, so edits take effect immediat
 
 ## Memory usage
 
-~3.5 GB total (macOS), ~3 GB VRAM + ~3 GB RAM (Linux with CUDA).
+~3.5 GB total (macOS), ~3 GB VRAM + ~3 GB RAM (Linux with CUDA). With `--tts qwen`: ~6 GB VRAM + ~4 GB RAM.
 
 ## Credits
 

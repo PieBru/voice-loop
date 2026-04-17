@@ -17,4 +17,10 @@ dependencies = [
     "kokoro-onnx>=0.4",
     "soundfile>=0.12",
     "faster-whisper>=1.2",
+    "qwen-tts; sys_platform == 'linux'",
+]
+
+[tool.uv]
+override-dependencies = [
+    "transformers>=5.1.0",
 ]
