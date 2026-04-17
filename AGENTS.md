@@ -49,6 +49,8 @@ This repo uses the `.specify` framework for structured feature work. If adding a
 ## Active Technologies
 - Python 3.11+ (managed with `uv`) + faster-whisper 1.2.1 (new), moonshine-voice (existing), kokoro-onnx (existing) (002-multilang-support)
 - File-based (HF cache for models, config.yaml for settings) (002-multilang-support)
+- Python 3.11+ managed with `uv` + stdlib `urllib.request`, `json` (already in use); no new dependencies (003-pluggable-response-handler)
+- `config.yaml` for handler configuration (existing pattern) (003-pluggable-response-handler)
 
 ## Recent Changes
 - 002-multilang-support: Added Python 3.11+ (managed with `uv`) + faster-whisper 1.2.1 (new), moonshine-voice (existing), kokoro-onnx (existing)
