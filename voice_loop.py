@@ -931,13 +931,11 @@ def main():
         print("Loading VoxCPM TTS...", flush=True)
         from voxcpm import VoxCPM as _VoxCPM
 
-        device = _voxcpm_cfg.get("device") or "auto"
-        print(f"  Loading VoxCPM2 (~8GB on first run, device={device})...", flush=True)
+        print(f"  Loading VoxCPM2 (~8GB on first run)...", flush=True)
         voxcpm_model = _VoxCPM.from_pretrained(
             "openbmb/VoxCPM2",
             load_denoiser=False,
             optimize=False,
-            device=device,
         )
         voxcpm_sr = voxcpm_model.tts_model.sample_rate
         print(f"  VoxCPM loaded: {voxcpm_sr}Hz output", flush=True)
@@ -1108,7 +1106,7 @@ def main():
         "zeroclaw": _zeroclaw_handler,
     }
 
-    def generate_response(messages, max_tokens=200, temperature=0.7, **kwargs):
+    def generate_response(messages, max_tokens=1200, temperature=0.7, **kwargs):
         nonlocal _active_handler
         try:
             return _handlers[_active_handler](
@@ -1129,7 +1127,7 @@ def main():
 
     llm_generate = generate_response
 
-    def stream_sentences(messages, max_tokens=200, temperature=0.7):
+    def stream_sentences(messages, max_tokens=1200, temperature=0.7):
         q: queue.Queue[str | None] = queue.Queue()
         cancel = threading.Event()
 
