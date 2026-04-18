@@ -364,7 +364,10 @@ Both files are re-read at the start of every turn, so edits take effect immediat
 
 Built with:
 - [Moonshine](https://github.com/moonshine-ai/moonshine) — STT
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — STT (99+ languages)
 - [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) — TTS
+- [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) — neural TTS (CUDA)
+- [VoxCPM2](https://github.com/OpenBMB/VoxCPM) — diffusion TTS (30 languages)
 - [Silero VAD](https://github.com/snakers4/silero-vad) — voice activity detection
 - [Smart Turn v3](https://github.com/pipecat-ai/smart-turn) — end-of-turn detection
 - [LiveKit APM](https://github.com/livekit/python-sdks) — WebRTC AEC3
@@ -384,7 +387,7 @@ Changes on top of the upstream [TrelisResearch/voice-loop](https://github.com/Tr
 - Model aliases via `config.yaml` (e.g. `gemma-4-e4b` → server model `Gemma4-E4B`)
 - Constitution v1.1.x: dual-platform technology constraints
 
-### Multilanguage support (`002-multilang-support` branch)
+### Multilanguage support (merged to main)
 
 - **`--lang` flag** — sets the language for the entire pipeline (STT + LLM + TTS) with a single argument (default: `en`). Supports any ISO 639-1 code; built-in mappings for 8 languages (en, es, ja, fr, it, pt, zh, de) with appropriate TTS voices and LLM language instructions.
 - **Dual STT backend** — **Moonshine** (8 languages, CPU) auto-selected when possible; **faster-whisper** (99+ languages, CPU/CUDA) auto-selected as fallback. Force either with `--stt whisper` or `--stt moonshine`.
@@ -396,7 +399,7 @@ Changes on top of the upstream [TrelisResearch/voice-loop](https://github.com/Tr
 - **`config.yaml` overrides** — `languages` section lets users override built-in TTS voices and language mappings.
 - **Error handling** — clear errors for unsupported Moonshine+language combinations; actionable messages for missing faster-whisper or unreachable servers.
 
-### Pluggable response handler (`003-pluggable-response-handler` branch)
+### Pluggable response handler (merged to main)
 
 - **`--handler` flag** — selects the response generation backend (`llm` for direct API call, `agentic` for external agent service, `zeroclaw` for ZeroClaw). Default is `llm`.
 - **Agentic handler** — delegates response generation to an external agentic service (OpenAI-compatible API) at a configurable endpoint (`http://localhost:8089/v1` by default). Waits for full response; chime/ticks provide audible feedback during processing.
@@ -406,12 +409,21 @@ Changes on top of the upstream [TrelisResearch/voice-loop](https://github.com/Tr
 - **`--offline` flag** — sets `HF_HUB_OFFLINE=1` for fully offline operation after first model download.
 - **`config.yaml` handlers section** — configure endpoint URL, model name, token, and timeout per handler.
 
-### QwenTTS and VoxCPM backends (`005`–`007` branches)
+### QwenTTS and VoxCPM backends (merged to main)
 
 - **`--tts` flag** — selects TTS backend: `kokoro` (default), `qwen` (CUDA Linux), `qwen-cpp` (all platforms), `voxcpm` (all platforms).
 - **Qwen3-TTS** — 1.7B neural TTS with 9 built-in speakers, 10 languages. Requires CUDA GPU with ≥8GB VRAM. `--list --tts qwen` shows speakers.
 - **QwenTTS C++** — lightweight 0.6B model via `qwen3-tts-cli` subprocess. Voice cloning from reference audio. Runs on CPU/CUDA/Metal.
 - **VoxCPM2** — 2B diffusion TTS with 30 languages, voice cloning (5-30s reference audio), and voice design (text descriptions). Install: `uv add voxcpm`.
+
+### Streaming TTS (merged to main)
+
+- **Sentence-by-sentence streaming** — Kokoro TTS starts speaking the first sentence while the LLM continues generating the rest. Responses print incrementally, one sentence at a time.
+- **`stream_sentences()`** — background-thread generator that yields LLM output as complete sentences (MLX streaming on macOS, full-generation fallback on Linux).
+- **`_split_sentences()`** — regex sentence splitter with 20-char minimum fragment size (merges abbreviations like "Mr." into the next sentence).
+- **asyncio Queue + GROUP=2** — Kokoro synthesizes sentence pairs for better prosody across boundaries. `maxsize=1` queue keeps exactly one pre-synthesized group buffered.
+- **`pad_gap_and_check()`** — 150ms AEC reverb blanking between sentences prevents false barge-in triggers from room echo decay.
+- **Non-Kokoro backends** — still get incremental sentence printing; full synthesis happens after the complete response is generated.
 
 ## Raspberry Pi
 

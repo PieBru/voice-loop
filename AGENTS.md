@@ -16,7 +16,7 @@
 - **Sacred audio constants**: 16 kHz mono, 512-sample chunks (32 ms). Do not change sample rates or buffer sizes without end-to-end validation.
 - **Configuration**: `config.yaml` at project root for user-tunable settings (model aliases, language settings). Built-in defaults used when absent.
 - **Multilanguage**: `--lang` flag sets language for the full pipeline (STT + LLM + TTS). `--stt` flag selects STT backend (`whisper` or `moonshine`; auto-selected if omitted). Default language is `en` (English).
-- **TTS backend**: `--tts` flag selects TTS backend (`kokoro` for CPU ONNX, `qwen` for CUDA neural TTS, `qwen-cpp` for C++ subprocess, `voxcpm` for VoxCPM2 diffusion TTS). Default is `kokoro`. `--tts qwen` requires Linux with NVIDIA CUDA (≥8 GB VRAM for 1.7B model). `--tts qwen-cpp` works on all platforms (requires external `qwen3-tts-cli` binary). `--tts voxcpm` requires `uv add voxcpm` (30 languages, voice cloning, voice design). Neither QwenTTS nor VoxCPM backend supports streaming; audio plays after full synthesis.
+- **TTS backend**: `--tts` flag selects TTS backend (`kokoro` for CPU ONNX, `qwen` for CUDA neural TTS, `qwen-cpp` for C++ subprocess, `voxcpm` for VoxCPM2 diffusion TTS). Default is `kokoro`. `--tts qwen` requires Linux with NVIDIA CUDA (≥8 GB VRAM for 1.7B model). `--tts qwen-cpp` works on all platforms (requires external `qwen3-tts-cli` binary). `--tts voxcpm` requires `uv add voxcpm` (30 languages, voice cloning, voice design). Kokoro uses sentence-by-sentence streaming TTS (asyncio Queue, GROUP=2). Neither QwenTTS nor VoxCPM backend supports streaming; audio plays after full synthesis.
 - **Response handler**: `--handler` flag selects the response generation backend (`llm` for direct API call, `agentic` for external agent service). Default is `llm`. `--list-handlers` shows available handlers. Handler config in `config.yaml` → `handlers` section.
 
 ## How to Change Behavior
@@ -57,6 +57,7 @@ This repo uses the `.specify` framework for structured feature work. If adding a
 - Python 3.11+ (managed with `uv`) + `asyncio`, `threading`, `queue`, `re`, `numpy`, `sounddevice` (all already in project) (008-streaming-tts)
 
 ## Recent Changes
+- 008-streaming-tts: Ported upstream sentence-by-sentence streaming TTS architecture with `stream_sentences()`, `_collecting()`, `_split_sentences()`, asyncio Queue + GROUP=2 Kokoro synthesis, `pad_gap_and_check()` inter-sentence AEC, incremental response printing
 - 007-voxcpm-tts: Added `--tts voxcpm` option, VoxCPM2 diffusion TTS backend (30 languages, voice cloning via ref_audio, voice design via desc), `_load_voxcpm_config()`, `_print_voxcpm_info()`
 - 006-qwen-tts-cpp: Added `--tts qwen-cpp` option, subprocess integration with `qwen3-tts-cli`, config for binary path/model dir/ref audio, `_print_qwen_cpp_info()`, install instructions
 - 005-qwen-tts: Added `--tts` flag (kokoro/qwen), Qwen3-TTS backend for CUDA Linux, `_QWEN_SPEAKER_MAP`, `_patch_qwen_tts_compat()` for transformers 5.x compat, `--list --tts qwen` speaker listing

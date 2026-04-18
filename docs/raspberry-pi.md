@@ -4,13 +4,40 @@ Short answer: **not yet practical for a good voice experience**, but worth revis
 
 ## What needs swapping
 
-| Component | Mac (current) | Raspberry Pi |
-|-----------|--------------|-------------|
-| LLM runtime | mlx-vlm (Apple Silicon only) | llama.cpp or LiteRT-LM |
+| Component | Mac/Linux (current) | Raspberry Pi |
+|-----------|---------------------|--------------|
+| LLM runtime | mlx-vlm (macOS) / llama.cpp server (Linux) | llama.cpp or LiteRT-LM |
 | AEC | LiveKit APM (WebRTC AEC3) | speexdsp or [thewh1teagle/aec](https://github.com/thewh1teagle/aec) |
-| Everything else | — | unchanged (Moonshine, Kokoro, Silero VAD, Smart Turn — all ONNX, ARM-compatible) |
+| Everything else | — | unchanged (see below) |
 
 The architecture — VAD → ASR → streaming LLM → sentence-pipeline → TTS — ports cleanly. It's really two dependency swaps.
+
+## What works on ARM (no changes needed)
+
+| Component | Notes |
+|-----------|-------|
+| Moonshine STT | ONNX, ARM-compatible. 8 languages (en, es, ja, ko, ar, vi, uk, zh) |
+| faster-whisper STT | CTranslate2 backend, CPU mode. 99+ languages. Use `--stt whisper --whisper-device cpu` |
+| Kokoro TTS | ONNX, ARM-compatible. Default backend. Supports sentence-by-sentence streaming |
+| Silero VAD | ONNX, ARM-compatible |
+| Smart Turn v3 | ONNX, ARM-compatible |
+| QwenTTS C++ (`--tts qwen-cpp`) | GGML-based, builds on CPU/CUDA/Metal. 0.6B model (~1.2 GB). Voice cloning from reference audio |
+
+## What does NOT work on ARM
+
+| Component | Reason |
+|-----------|--------|
+| QwenTTS (`--tts qwen`) | Requires NVIDIA CUDA with ≥8 GB VRAM. 1.7B PyTorch model |
+| VoxCPM (`--tts voxcpm`) | 2B PyTorch model. Very heavy (~8 GB download). Technically runs on CPU but impractically slow on ARM |
+| MLX LLM inference | Apple Silicon only |
+
+## Recommended Pi configuration
+
+```bash
+uv run voice_loop.py --stt whisper --whisper-device cpu --tts kokoro
+# Or for voice cloning (requires qwen3-tts-cli built from source):
+uv run voice_loop.py --stt whisper --whisper-device cpu --tts qwen-cpp
+```
 
 ## The LLM bottleneck
 
@@ -26,6 +53,10 @@ Benchmarked on **Raspberry Pi 4** (Cortex-A72, 4 cores, 8 GB RAM) with llama.cpp
 **2.9 t/s (Gemma 3 1B)** is marginal — first sentence arrives in ~5 s, full response in ~20–30 s. Usable only for very patient, low-frequency conversation.
 
 For voice you realistically need **20+ t/s** to feel natural.
+
+### Streaming TTS helps (a little)
+
+The sentence-by-sentence streaming architecture (`stream_sentences()` + Kokoro GROUP=2) means audio starts playing as soon as the first sentence is ready. On slow hardware this is especially valuable — the user hears something within seconds instead of waiting for the full response. But it can't compensate for fundamentally slow LLM inference.
 
 ## Pi 5 + LiteRT-LM — the best near-term hope
 

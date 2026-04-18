@@ -18,6 +18,7 @@ Usage:
     uv run voice_loop.py --stt whisper           # force Whisper STT for any language
 """
 
+import re as _re
 import argparse
 import asyncio
 import ctypes.util
@@ -29,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import termios
+import threading
 import time as _time
 import tty
 import urllib.error
@@ -52,11 +54,30 @@ MAX_HISTORY = 10
 CHIME_SR = 24000
 _DIR = Path(__file__).parent
 
+_SENT_END = _re.compile(r"(?<=[.!?])\s+")
+_SENT_MIN_CHARS = 20
+_GAP_BLANK_SAMPLES = int(0.15 * SAMPLE_RATE)
+
 
 def load_system_prompt(include_memory: bool = False) -> str:
     names = ("SOUL.md", "MEMORY.md") if include_memory else ("SOUL.md",)
     parts = [(_DIR / n).read_text().strip() for n in names if (_DIR / n).exists()]
     return "\n\n".join(p for p in parts if p)
+
+
+def _split_sentences(text: str) -> list[str]:
+    parts, carry = [], ""
+    for p in _SENT_END.split(text.strip()):
+        p = p.strip()
+        if not p:
+            continue
+        carry = f"{carry} {p}".strip() if carry else p
+        if len(carry) >= _SENT_MIN_CHARS:
+            parts.append(carry)
+            carry = ""
+    if carry:
+        parts.append(carry)
+    return parts
 
 
 def _fade_tone(freq, dur, amp=0.6):
@@ -1069,6 +1090,88 @@ def main():
 
     llm_generate = generate_response
 
+    def stream_sentences(messages, max_tokens=200, temperature=0.7):
+        q: queue.Queue[str | None] = queue.Queue()
+        cancel = threading.Event()
+
+        def _worker():
+            def _merge(carry, fragment):
+                return f"{carry} {fragment}".strip() if carry else fragment
+
+            try:
+                if IS_DARWIN:
+                    try:
+                        from mlx_vlm import stream_generate as _mlx_stream
+                    except ImportError:
+                        _mlx_stream = None
+                    if _mlx_stream is not None:
+                        token_buf, carry = "", ""
+                        prompt = processor.apply_chat_template(
+                            messages, tokenize=False, add_generation_prompt=True
+                        )
+                        for result in _mlx_stream(
+                            model,
+                            processor,
+                            prompt,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            repetition_penalty=1.2,
+                            verbose=False,
+                        ):
+                            if cancel.is_set():
+                                return
+                            token_buf += (
+                                result.text if hasattr(result, "text") else str(result)
+                            )
+                            while True:
+                                m = _SENT_END.search(token_buf)
+                                if not m:
+                                    break
+                                carry = _merge(
+                                    carry, token_buf[: m.start() + 1].strip()
+                                )
+                                token_buf = token_buf[m.end() :]
+                                if len(carry) >= _SENT_MIN_CHARS:
+                                    q.put(carry)
+                                    carry = ""
+                        remainder = (
+                            _merge(carry, token_buf.strip())
+                            if token_buf.strip()
+                            else carry
+                        )
+                        if remainder:
+                            q.put(remainder)
+                    else:
+                        text = llm_generate(
+                            messages, max_tokens=max_tokens, temperature=temperature
+                        )
+                        for s in _split_sentences(text) or [text]:
+                            if cancel.is_set():
+                                return
+                            q.put(s)
+                else:
+                    text = llm_generate(
+                        messages, max_tokens=max_tokens, temperature=temperature
+                    )
+                    for s in _split_sentences(text) or [text]:
+                        if cancel.is_set():
+                            return
+                        q.put(s)
+            except Exception as e:
+                print(f"  [LLM error: {e}]", file=sys.stderr)
+            finally:
+                q.put(None)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        try:
+            while True:
+                s = q.get()
+                if s is None:
+                    return
+                yield s
+        finally:
+            cancel.set()
+
     def speak_tts(text):
         if not text or not text.strip():
             return
@@ -1125,12 +1228,7 @@ def main():
                     pass
         elif voxcpm_model:
             try:
-                import re as _re
-
-                _VX_SENT = _re.compile(r"(?<=[.!?])\s+")
-                sentences = [s.strip() for s in _VX_SENT.split(text) if s.strip()]
-                if len(sentences) < 2:
-                    sentences = [text]
+                sentences = _split_sentences(text) or [text]
                 chunks = []
                 ref = _voxcpm_cfg.get("ref_audio")
                 desc = _voxcpm_cfg.get("voice_desc")
@@ -1148,9 +1246,7 @@ def main():
                             text=sent, cfg_value=2.0, inference_timesteps=10
                         )
                     chunks.append(wav)
-                import numpy as _np
-
-                full = _np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+                full = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
                 sd.play(full, voxcpm_sr)
                 sd.wait()
             except Exception as e:
@@ -1235,22 +1331,54 @@ def main():
             # In a tick — wait until it ends
             _time.sleep(TICK_DUR - phase + 0.005)
 
-    def play_tts_stream(response):
+    def play_tts_stream(sentence_source):
+        if isinstance(sentence_source, str):
+            sentence_iter = iter(_split_sentences(sentence_source) or [sentence_source])
+        else:
+            sentence_iter = sentence_source
+
         drain_audio_q()
-        tts_stream = kokoro.create_stream(
-            response, voice=args.voice, speed=1.0, lang=_lang_cfg["tts_lang"]
-        )
         out_stream, interrupted = None, False
         tts_16k_buf: list[np.ndarray] = []
+        _cache_arr = np.array([], dtype=np.float32)
+        _cache_len = 0
         state = {"play_start": None, "consec_speech": 0, "mic_pos": 0}
         aec_process = make_aec_processor() if make_aec_processor else None
 
+        def _get_tts_concat():
+            nonlocal _cache_arr, _cache_len
+            if len(tts_16k_buf) != _cache_len:
+                _cache_arr = (
+                    np.concatenate(tts_16k_buf)
+                    if tts_16k_buf
+                    else np.array([], dtype=np.float32)
+                )
+                _cache_len = len(tts_16k_buf)
+            return _cache_arr
+
+        def _append_ref(chunk_samples, sr):
+            if aec_process is None:
+                return
+            if sr == SAMPLE_RATE:
+                tts_16k_buf.append(chunk_samples.astype(np.float32))
+            else:
+                idx = np.arange(0, len(chunk_samples), sr / SAMPLE_RATE)
+                tts_16k_buf.append(
+                    np.interp(idx, np.arange(len(chunk_samples)), chunk_samples).astype(
+                        np.float32
+                    )
+                )
+
         def check_barge_in():
-            if not (aec_process and state["play_start"] and tts_16k_buf):
+            if not (
+                aec_process
+                and state["play_start"]
+                and _time.monotonic() - state["play_start"] >= 0.5
+            ):
                 return False
-            if _time.monotonic() - state["play_start"] < 0.5:
+            tts_concat = _get_tts_concat()
+            if not len(tts_concat):
                 return False
-            tts_concat = np.concatenate(tts_16k_buf)
             while not audio_q.empty():
                 mic_chunk = audio_q.get_nowait()
                 if len(mic_chunk) < CHUNK_SAMPLES:
@@ -1266,46 +1394,112 @@ def main():
                     state["consec_speech"] = 0
             return False
 
+        def pad_gap_and_check():
+            if aec_process is None:
+                return False
+            blanked = 0
+            while not audio_q.empty():
+                mic_chunk = audio_q.get_nowait()
+                if len(mic_chunk) < CHUNK_SAMPLES:
+                    continue
+                silence_ref = np.zeros(len(mic_chunk), dtype=np.float32)
+                tts_16k_buf.append(silence_ref)
+                state["mic_pos"] += len(mic_chunk)
+                if blanked < _GAP_BLANK_SAMPLES:
+                    state["consec_speech"] = 0
+                    blanked += len(mic_chunk)
+                    continue
+                cleaned = aec_process(mic_chunk, silence_ref)
+                if _vad_prob(vad, cleaned.astype(np.float32)) > 0.8:
+                    state["consec_speech"] += 1
+                    if state["consec_speech"] >= 5:
+                        return True
+                else:
+                    state["consec_speech"] = 0
+            return False
+
         async def _play():
             nonlocal out_stream, interrupted
-            async for chunk_samples, sr in tts_stream:
-                if out_stream is None:
-                    if chime_sound is not None:
-                        _wait_for_chime_gap()
-                        sd.stop()
-                    out_stream = sd.OutputStream(
-                        samplerate=sr, channels=1, dtype="float32"
+            loop = asyncio.get_running_loop()
+            synth_q: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+            async def _synthesizer():
+                async def _synth(text):
+                    return await loop.run_in_executor(
+                        None,
+                        lambda t=text: kokoro.create(
+                            t,
+                            voice=args.voice,
+                            speed=1.0,
+                            lang=_lang_cfg["tts_lang"],
+                        ),
                     )
-                    out_stream.start()
-                    drain_audio_q()
-                    vad.reset_states()
-                    state["play_start"] = _time.monotonic()
-                if aec_process is not None:
-                    if sr == SAMPLE_RATE:
-                        tts_16k_buf.append(chunk_samples.astype(np.float32))
-                    else:
-                        idx = np.arange(0, len(chunk_samples), sr / SAMPLE_RATE)
-                        tts_16k_buf.append(
-                            np.interp(
-                                idx, np.arange(len(chunk_samples)), chunk_samples
-                            ).astype(np.float32)
-                        )
-                data = chunk_samples.reshape(-1, 1)
-                for i in range(0, len(data), 4096):
-                    if select.select([sys.stdin], [], [], 0)[0]:
-                        sys.stdin.read(1)
-                        interrupted = True
-                    elif check_barge_in():
-                        interrupted = True
-                        print("  [voice interrupt]", flush=True)
+
+                GROUP = 2
+                buf: list[str] = []
+                for sentence in sentence_iter:
                     if interrupted:
                         break
-                    out_stream.write(data[i : i + 4096])
-                if interrupted:
-                    break
-            if out_stream:
-                out_stream.stop()
-                out_stream.close()
+                    buf.append(sentence)
+                    if len(buf) == GROUP:
+                        await synth_q.put(await _synth(" ".join(buf)))
+                        buf = []
+                if buf and not interrupted:
+                    await synth_q.put(await _synth(" ".join(buf)))
+                await synth_q.put(None)
+
+            synth_task = asyncio.create_task(_synthesizer())
+            first_sentence = True
+            try:
+                while True:
+                    item = await synth_q.get()
+                    if item is None or interrupted:
+                        break
+                    samples, sr = item
+
+                    if not first_sentence and pad_gap_and_check():
+                        interrupted = True
+                        print("  [voice interrupt]", flush=True)
+                        break
+
+                    if out_stream is None:
+                        if chime_sound is not None:
+                            _wait_for_chime_gap()
+                            sd.stop()
+                        out_stream = sd.OutputStream(
+                            samplerate=sr, channels=1, dtype="float32"
+                        )
+                        out_stream.start()
+                        drain_audio_q()
+
+                    vad.reset_states()
+                    state["play_start"] = _time.monotonic()
+                    state["consec_speech"] = 0
+                    first_sentence = False
+
+                    _append_ref(samples, sr)
+                    data = samples.reshape(-1, 1)
+                    for i in range(0, len(data), 4096):
+                        if select.select([sys.stdin], [], [], 0)[0]:
+                            sys.stdin.read(1)
+                            interrupted = True
+                        elif check_barge_in():
+                            interrupted = True
+                            print("  [voice interrupt]", flush=True)
+                        if interrupted:
+                            break
+                        out_stream.write(data[i : i + 4096])
+                    if interrupted:
+                        break
+            finally:
+                synth_task.cancel()
+                try:
+                    await synth_task
+                except asyncio.CancelledError:
+                    pass
+                if out_stream:
+                    out_stream.stop()
+                    out_stream.close()
 
         asyncio.run(_play())
         if interrupted and state["consec_speech"] < 3:
@@ -1321,6 +1515,7 @@ def main():
             sd.play(chime_sound, CHIME_SR)
             chime_started_at[0] = _time.monotonic()
         wav_path = save_wav(audio) if args.audio_mode else None
+        heard, response = "", ""
         try:
             messages = _sys_messages()
             for h in history[-MAX_HISTORY:]:
@@ -1335,21 +1530,50 @@ def main():
                 heard = transcribe(audio)
                 print(f"  [{heard}]")
                 messages.append({"role": "user", "content": heard})
-            response = llm_generate(
-                messages, **({"audio": [wav_path]} if args.audio_mode else {})
-            )
             if args.audio_mode:
+                response = llm_generate(messages, audio=[wav_path])
                 heard = transcribe_future.result(timeout=10)
                 print(f"  [{heard}]")
-            print(f"\n> {response}\n", flush=True)
-            if response:
-                if kokoro:
+                print(f"\n> {response}\n", flush=True)
+                if kokoro and response:
                     play_tts_stream(response)
                 elif qwen_tts_model or _qwen_cpp_bin or voxcpm_model:
                     speak_tts(response)
                 elif chime_sound is not None:
                     _wait_for_chime_gap()
                     sd.stop()
+            else:
+                response_parts: list[str] = []
+
+                def _collecting(gen):
+                    def _emit(s):
+                        response_parts.append(s)
+                        print(f"> {s}", flush=True)
+                        return s
+
+                    last = None
+                    for s in gen:
+                        yield _emit(s)
+                        last = s
+                    if last and last[-1] not in ".!?":
+                        yield _emit("Wait, I've gone on a bit — want me to continue?")
+
+                print()
+                if kokoro:
+                    play_tts_stream(_collecting(stream_sentences(messages)))
+                else:
+                    for _ in _collecting(stream_sentences(messages)):
+                        pass
+                    if response_parts and (
+                        qwen_tts_model or _qwen_cpp_bin or voxcpm_model
+                    ):
+                        speak_tts(" ".join(response_parts))
+                    elif chime_sound is not None:
+                        _wait_for_chime_gap()
+                        sd.stop()
+
+                response = " ".join(response_parts)
+                print()
             history.append({"user": heard, "assistant": response})
             if len(history) > MAX_HISTORY:
                 history.pop(0)
