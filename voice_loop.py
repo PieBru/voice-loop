@@ -461,6 +461,48 @@ def _print_qwen_cpp_info():
     print("    qwen_cpp_ref_audio: /path/to/reference.wav")
 
 
+def _load_voxcpm_config():
+    cfg = {"ref_audio": None, "voice_desc": None, "device": None}
+    config_path = _DIR / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(config_path.read_text())
+            if data and "tts" in data:
+                tts = data["tts"]
+                cfg["ref_audio"] = tts.get("voxcpm_ref_audio", cfg["ref_audio"])
+                cfg["voice_desc"] = tts.get("voxcpm_voice_desc", cfg["voice_desc"])
+                cfg["device"] = tts.get("voxcpm_device", cfg["device"])
+        except Exception:
+            pass
+    return cfg
+
+
+def _print_voxcpm_info():
+    cfg = _load_voxcpm_config()
+    print("VoxCPM TTS Backend (VoxCPM2)")
+    print("=" * 50)
+    print("  30 languages: ar, zh, da, nl, en, fi, fr, de, el, he, hi,")
+    print("  id, it, ja, km, ko, lo, ms, no, pl, pt, ru, es, sw, sv,")
+    print("  tl, th, tr, vi (+ Chinese dialects)")
+    print()
+    print(
+        f"  Ref audio:   {cfg['ref_audio'] or '(not configured — uses default voice)'}"
+    )
+    print(f"  Voice desc:  {cfg['voice_desc'] or '(not configured)'}")
+    print(f"  Device:      {cfg['device'] or 'auto (CUDA/MPS/CPU)'}")
+    print()
+    print("Install:")
+    print("  uv add voxcpm")
+    print()
+    print("config.yaml example:")
+    print("  tts:")
+    print("    voxcpm_ref_audio: /path/to/voice.wav   # 5-30s for voice cloning")
+    print("    voxcpm_voice_desc: warm female voice    # or describe a voice")
+    print("    voxcpm_device: cuda                     # cuda, cpu, mps, or auto")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Voice Loop — a minimal on-device voice agent"
@@ -543,7 +585,7 @@ def main():
     ap.add_argument(
         "--tts",
         default="kokoro",
-        choices=["kokoro", "qwen", "qwen-cpp"],
+        choices=["kokoro", "qwen", "qwen-cpp", "voxcpm"],
         help="TTS backend (default: kokoro)",
     )
     ap.add_argument(
@@ -577,6 +619,8 @@ def main():
             _print_qwen_speaker_table()
         elif args.tts == "qwen-cpp":
             _print_qwen_cpp_info()
+        elif args.tts == "voxcpm":
+            _print_voxcpm_info()
         else:
             _print_language_table()
         sys.exit(0)
@@ -660,6 +704,16 @@ def main():
             print(f"  Reference audio: {ref}", flush=True)
         else:
             print("  No reference audio — using default voice", flush=True)
+
+    _voxcpm_cfg = _load_voxcpm_config() if args.tts == "voxcpm" else None
+    voxcpm_model = None
+    voxcpm_sr = None
+    if args.tts == "voxcpm" and args.tts_enabled:
+        try:
+            from voxcpm import VoxCPM as _VoxCPM
+        except ImportError:
+            print("Error: voxcpm not installed.\nRun: uv add voxcpm\nThen try again.")
+            sys.exit(1)
 
     print("Loading Silero VAD...", flush=True)
     from silero_vad import load_silero_vad
@@ -813,6 +867,28 @@ def main():
         )
         speakers = qwen_tts_model.get_supported_speakers()
         print(f"  QwenTTS loaded: {len(speakers)} speakers", flush=True)
+    elif args.tts == "voxcpm" and args.tts_enabled:
+        print("Loading VoxCPM TTS...", flush=True)
+        from voxcpm import VoxCPM as _VoxCPM
+
+        device = _voxcpm_cfg.get("device") or "auto"
+        print(f"  Loading VoxCPM2 (~8GB on first run, device={device})...", flush=True)
+        voxcpm_model = _VoxCPM.from_pretrained(
+            "openbmb/VoxCPM2",
+            load_denoiser=False,
+            optimize=False,
+            device=device,
+        )
+        voxcpm_sr = voxcpm_model.tts_model.sample_rate
+        print(f"  VoxCPM loaded: {voxcpm_sr}Hz output", flush=True)
+        ref = _voxcpm_cfg.get("ref_audio")
+        desc = _voxcpm_cfg.get("voice_desc")
+        if ref:
+            print(f"  Voice cloning from: {ref}", flush=True)
+        elif desc:
+            print(f"  Voice design: {desc}", flush=True)
+        else:
+            print("  Default voice (no cloning or design)", flush=True)
 
     make_aec_processor = None
     if args.aec:
@@ -1047,6 +1123,38 @@ def main():
                     os.unlink(tmp_path)
                 except Exception:
                     pass
+        elif voxcpm_model:
+            try:
+                import re as _re
+
+                _VX_SENT = _re.compile(r"(?<=[.!?])\s+")
+                sentences = [s.strip() for s in _VX_SENT.split(text) if s.strip()]
+                if len(sentences) < 2:
+                    sentences = [text]
+                chunks = []
+                ref = _voxcpm_cfg.get("ref_audio")
+                desc = _voxcpm_cfg.get("voice_desc")
+                for sent in sentences:
+                    if ref:
+                        wav = voxcpm_model.generate(text=sent, reference_wav_path=ref)
+                    elif desc:
+                        wav = voxcpm_model.generate(
+                            text=f"({desc}){sent}",
+                            cfg_value=2.0,
+                            inference_timesteps=10,
+                        )
+                    else:
+                        wav = voxcpm_model.generate(
+                            text=sent, cfg_value=2.0, inference_timesteps=10
+                        )
+                    chunks.append(wav)
+                import numpy as _np
+
+                full = _np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+                sd.play(full, voxcpm_sr)
+                sd.wait()
+            except Exception as e:
+                print(f"  [voxcpm error: {e}]", file=sys.stderr)
 
     _mem_path = _DIR / "MEMORY.md"
 
@@ -1237,7 +1345,7 @@ def main():
             if response:
                 if kokoro:
                     play_tts_stream(response)
-                elif qwen_tts_model or _qwen_cpp_bin:
+                elif qwen_tts_model or _qwen_cpp_bin or voxcpm_model:
                     speak_tts(response)
                 elif chime_sound is not None:
                     _wait_for_chime_gap()
@@ -1299,7 +1407,7 @@ def main():
         max_tokens=512,
     )
     print(f"> {greeting}\n", flush=True)
-    if kokoro or qwen_tts_model or _qwen_cpp_bin:
+    if kokoro or qwen_tts_model or _qwen_cpp_bin or voxcpm_model:
         speak_tts(greeting)
 
     with sd.InputStream(

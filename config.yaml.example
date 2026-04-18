@@ -34,6 +34,9 @@ tts:
   qwen_cpp_bin: qwen3-tts-cli  # or absolute path
   qwen_cpp_model_dir: /path/to/qwen3-tts.cpp/models
   qwen_cpp_ref_audio: ""  # optional: WAV file for voice cloning
+  voxcpm_ref_audio: ""    # optional: WAV file (5-30s) for voice cloning
+  voxcpm_voice_desc: ""   # optional: text description for voice design (e.g. "warm female voice")
+  voxcpm_device: auto     # cuda, cpu, mps, or auto
 
 handlers:
   agentic:
