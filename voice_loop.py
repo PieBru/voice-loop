@@ -380,12 +380,12 @@ def _print_language_table():
         for v in voices:
             p = v[0]
             by_prefix.setdefault(p, []).append(v)
-        print(f"  {'Lang':<16} {'Code':<6} Voices")
-        print("  " + "-" * 65)
+        print(f"  {'Lang':<28} {'Code':<6} Voices")
+        print("  " + "-" * 80)
         for prefix in sorted(by_prefix.keys()):
             code, name = prefix_lang.get(prefix, ("??", f"Unknown ({prefix})"))
             voice_list = ", ".join(by_prefix[prefix])
-            print(f"  {name:<16} {code:<6} {voice_list}")
+            print(f"  {name:<28} {code:<6} {voice_list}")
         print(f"\n  Total: {len(voices)} voices across {len(by_prefix)} languages")
 
     print()
@@ -396,8 +396,8 @@ def _print_language_table():
     print()
     print("=== QwenTTS C++ (--tts qwen-cpp, CPU/CUDA/Metal) ===")
     print()
-    print(f"  {'Lang':<16} {'Code':<6} Notes")
-    print("  " + "-" * 55)
+    print(f"  {'Lang':<28} {'Code':<6} Notes")
+    print("  " + "-" * 70)
     for code, name in [
         ("en", "English"),
         ("ru", "Russian"),
@@ -410,7 +410,7 @@ def _print_language_table():
         ("it", "Italian"),
         ("pt", "Portuguese"),
     ]:
-        print(f"  {name:<16} {code:<6} native pronunciation")
+        print(f"  {name:<28} {code:<6} native pronunciation")
     print(f"\n  Other languages: use --lang with a reference audio for voice cloning")
 
     print()
@@ -430,13 +430,13 @@ def _print_language_table():
 
 
 def _print_qwen_speaker_table():
-    print(f"  {'Lang':<14} {'Code':<6} {'Speaker':<12} Language Name")
-    print("  " + "-" * 55)
+    print(f"  {'Lang':<26} {'Code':<6} {'Speaker':<12} Language Name")
+    print("  " + "-" * 68)
     for code in sorted(_QWEN_SPEAKER_MAP.keys()):
         info = _QWEN_SPEAKER_MAP[code]
         native = {"en": "English", "zh": "Chinese", "ja": "Japanese", "ko": "Korean"}
         lang_name = native.get(code, f"{info['language']} (via Ryan)")
-        print(f"  {lang_name:<14} {code:<6} {info['speaker']:<12} {info['language']}")
+        print(f"  {lang_name:<26} {code:<6} {info['speaker']:<12} {info['language']}")
     print(
         f"\n  9 speakers: Chelsie, Dylan, Eric, Ono_Anna, Aiden, Ryan, Serena, Sohee, Vivian"
     )
