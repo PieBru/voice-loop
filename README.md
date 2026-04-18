@@ -1,5 +1,7 @@
 # Voice Loop
 
+> **WARNING**: This fork should be considered as **NOT WORKING**, as it has been useful to experiment new features without extensive testing. Also, this fork should be considered **DEPRECATED** after it will have for at least one month one or more commits behind the original project.
+
 A minimal on-device voice agent loop. Runs entirely on macOS (Apple Silicon) and Linux (NVIDIA CUDA).
 
 **Now with even snappier audio responses** — TTS starts on the first sentence while the LLM is still generating the rest, so you hear the reply almost immediately.
