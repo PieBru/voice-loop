@@ -878,6 +878,16 @@ def main():
         print("Loading QwenTTS...", flush=True)
         _patch_qwen_tts_compat()
         from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
+        from qwen_tts.core.models import Qwen3TTSConfig
+        from transformers import AutoConfig, AutoModel, AutoProcessor
+        from qwen_tts.core.models import (
+            Qwen3TTSForConditionalGeneration,
+            Qwen3TTSProcessor as _Qwen3TTSProcessor,
+        )
+
+        AutoConfig.register("qwen3_tts", Qwen3TTSConfig)
+        AutoModel.register(Qwen3TTSConfig, Qwen3TTSForConditionalGeneration)
+        AutoProcessor.register(Qwen3TTSConfig, _Qwen3TTSProcessor)
 
         print(f"  Loading {_QWEN_TTS_MODEL_ID} (~3.4GB on first run)...", flush=True)
         qwen_tts_tokenizer = Qwen3TTSTokenizer.from_pretrained(_QWEN_TTS_MODEL_ID)
