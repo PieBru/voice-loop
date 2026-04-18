@@ -868,12 +868,12 @@ def main():
         from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
 
         print(f"  Loading {_QWEN_TTS_MODEL_ID} (~3.4GB on first run)...", flush=True)
-        qwen_tts_tokenizer = Qwen3TTSTokenizer.from_pretrained(_QWEN_TTS_MODEL_ID)
         qwen_tts_model = Qwen3TTSModel.from_pretrained(
             _QWEN_TTS_MODEL_ID,
             device_map="cuda:0",
             dtype=torch.bfloat16,
         )
+        qwen_tts_tokenizer = Qwen3TTSTokenizer.from_pretrained(_QWEN_TTS_MODEL_ID)
         speakers = qwen_tts_model.get_supported_speakers()
         print(f"  QwenTTS loaded: {len(speakers)} speakers", flush=True)
     elif args.tts == "voxcpm" and args.tts_enabled:
