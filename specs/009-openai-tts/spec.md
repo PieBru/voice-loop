@@ -86,6 +86,7 @@ As a user, I want `--list --tts openai` to show the configured endpoint, model, 
 - Endpoint URL with/without trailing slash → normalize
 - HTTP vs HTTPS → support both (no certificate validation issues for localhost)
 - Server slow to respond → set reasonable timeout (30s for full, configurable)
+- Failed HTTP requests → no retry; fail immediately, skip TTS for that turn, continue main loop
 
 ---
 
@@ -98,6 +99,9 @@ As a user, I want `--list --tts openai` to show the configured endpoint, model, 
 - **Q: What servers does this target?** A: Primarily [Qwen3-TTS-Openai-Fastapi](https://github.com/groxaxo/Qwen3-TTS-Openai-Fastapi) (default port 8880). But any server exposing `POST /v1/audio/speech` with standard OpenAI params works (XTTS-API-Server, LocalAI, etc.).
 - **Q: Audio format?** A: Request `response_format=wav` for non-streaming. For streaming, request `response_format=pcm` and handle raw float32 24kHz. Fallback to `mp3` if server rejects wav.
 - **Q: Coexistence with in-process backends?** A: Yes. `--tts kokoro` (default, in-process), `--tts qwen` (in-process CUDA), `--tts qwen-cpp` (subprocess), `--tts voxcpm` (in-process CUDA), `--tts openai` (HTTP client). All coexist.
+- Q: How should streaming audio chunks be played back? → A: Sentence-level buffering — collect all PCM chunks for one sentence, then play the complete sentence before requesting the next. Matches existing Kokoro streaming TTS pattern.
+- Q: Should failed TTS HTTP requests be retried? → A: Fail immediately — print error, skip TTS for that turn, continue main loop. No retry. Consistent with other TTS backends (qwen-cpp, voxcpm).
+- Q: How to handle varying sample rates from different servers? → A: Auto-detect from WAV header for non-streaming (soundfile.read returns sr). For streaming PCM, default to 24kHz with configurable `--tts-openai-sr` override in CLI and config.yaml.
 
 ---
 
@@ -110,10 +114,11 @@ As a user, I want `--list --tts openai` to show the configured endpoint, model, 
 - **FR-003**: The system MUST support endpoint URL configuration via `--tts-openai-endpoint` CLI flag and `config.yaml` → `tts.openai_endpoint` (CLI takes precedence).
 - **FR-004**: The system MUST support model name configuration via `--tts-openai-model` CLI flag and `config.yaml` → `tts.openai_model` (CLI takes precedence). Default: `qwen3-tts`.
 - **FR-005**: The system MUST send the `voice` parameter from `--voice` flag (or config default) in the TTS request. Default: `Chelsie`.
-- **FR-006**: The system MUST request `response_format=wav` for non-streaming synthesis and handle the returned audio data.
+- **FR-006**: The system MUST request `response_format=wav` for non-streaming synthesis and auto-detect sample rate from the WAV header for correct playback.
+- **FR-006b**: For streaming PCM mode, the system MUST default to 24kHz sample rate, configurable via `--tts-openai-sr` CLI flag or `config.yaml` → `tts.openai_sample_rate`.
 - **FR-007**: If the server is unreachable or returns an error, the system MUST print a clear error and skip TTS for that turn without crashing the main loop.
 - **FR-008**: The system MUST split long text into sentences before synthesis (reuse `_split_sentences()`) to avoid server timeout on long inputs.
-- **FR-009**: The system MUST support optional streaming mode via `--tts-openai-stream` flag or `config.yaml` → `tts.openai_stream`. When enabled, request `stream=true` with `response_format=pcm`, play audio incrementally.
+- **FR-009**: The system MUST support optional streaming mode via `--tts-openai-stream` flag or `config.yaml` → `tts.openai_stream`. When enabled, request `stream=true` with `response_format=pcm`, collect all chunks per sentence into a buffer, then play the complete sentence audio before requesting the next sentence.
 - **FR-010**: The `--no-tts` flag MUST work with openai backend (disables all TTS).
 - **FR-011**: The `--list --tts openai` flag MUST show configured endpoint, model, voice, streaming mode, and config.yaml keys.
 - **FR-012**: The system MUST normalize endpoint URLs (strip trailing slash, ensure `/v1/audio/speech` path).
@@ -124,7 +129,7 @@ As a user, I want `--list --tts openai` to show the configured endpoint, model, 
 
 - **OpenAI TTS Endpoint**: An HTTP server exposing `POST /v1/audio/speech` with params: `model`, `voice`, `input`, `response_format`, `speed`, `stream`.
 - **Endpoint Config**: URL, model name, default voice, streaming toggle, timeout — configurable via CLI flags and config.yaml.
-- **Audio Response**: WAV binary (non-streaming) or chunked PCM float32 24kHz (streaming) returned by the server.
+- **Audio Response**: WAV binary (non-streaming — sample rate auto-detected from header) or chunked PCM float32 (streaming — default 24kHz, configurable via `--tts-openai-sr`).
 
 ---
 
@@ -146,5 +151,5 @@ As a user, I want `--list --tts openai` to show the configured endpoint, model, 
 - The server follows the standard OpenAI TTS API schema (`POST /v1/audio/speech`).
 - For streaming, the server supports `stream=true` with chunked PCM output. Non-streaming always works as fallback.
 - `urllib.request` is sufficient for HTTP calls — no need for `httpx` or `requests`.
-- The server returns audio at a known sample rate (24kHz for Qwen3-TTS-Openai-Fastapi). The playback path handles the rate via `sd.play(data, sr)`.
+- The server returns audio at a known sample rate. WAV responses embed sample rate in the header (auto-detected). Streaming PCM defaults to 24kHz (configurable via `--tts-openai-sr`).
 - Audio format preference: WAV (non-streaming) or raw PCM (streaming). Both are easy to handle without extra libraries.

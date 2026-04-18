@@ -55,6 +55,8 @@ This repo uses the `.specify` framework for structured feature work. If adding a
 - File-based (HF cache for models, config.yaml for settings)
 - Python 3.11+ managed with `uv` + stdlib `urllib.request`, `json`; no new cloud dependencies
 - Python 3.11+ (managed with `uv`) + `asyncio`, `threading`, `queue`, `re`, `numpy`, `sounddevice` (all already in project) (008-streaming-tts)
+- Python 3.11+ + stdlib `urllib.request`, `json` (already imported); `soundfile` (already transitive via qwen-cpp path) for WAV parsing in non-streaming mode; `numpy` + `sounddevice` (already imported) for playback (009-openai-tts)
+- N/A (HTTP client — no local storage beyond config.yaml) (009-openai-tts)
 
 ## Recent Changes
 - 008-streaming-tts: Ported upstream sentence-by-sentence streaming TTS architecture with `stream_sentences()`, `_collecting()`, `_split_sentences()`, asyncio Queue + GROUP=2 Kokoro synthesis, `pad_gap_and_check()` inter-sentence AEC, incremental response printing

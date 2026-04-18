@@ -36,7 +36,12 @@ tts:
   qwen_cpp_ref_audio: ""  # optional: WAV file for voice cloning
   voxcpm_ref_audio: ""    # optional: WAV file (5-30s) for voice cloning
   voxcpm_voice_desc: ""   # optional: text description for voice design (e.g. "warm female voice")
-  voxcpm_device: auto     # cuda, cpu, mps, or auto
+  openai_endpoint: http://localhost:8880  # OpenAI-compatible TTS server URL
+  openai_model: qwen3-tts                 # model name sent to server
+  openai_voice: Chelsie                   # default voice (override with --voice)
+  openai_stream: false                    # enable streaming PCM mode
+  openai_sample_rate: 24000               # sample rate for streaming PCM
+  openai_timeout: 30                      # HTTP timeout in seconds
 
 handlers:
   agentic:
