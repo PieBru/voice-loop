@@ -236,7 +236,9 @@ _QWEN_SPEAKER_MAP = {
 }
 
 _QWEN_TTS_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-_QWEN_CPP_LANGS = frozenset({"en", "ru", "zh", "ja", "ko", "de", "fr", "es"})
+_QWEN_CPP_LANGS = frozenset(
+    {"en", "ru", "zh", "ja", "ko", "de", "fr", "es", "it", "pt"}
+)
 
 
 _HANDLER_DEFAULTS = {
@@ -405,6 +407,8 @@ def _print_language_table():
         ("de", "German"),
         ("fr", "French"),
         ("es", "Spanish"),
+        ("it", "Italian"),
+        ("pt", "Portuguese"),
     ]:
         print(f"  {name:<16} {code:<6} native pronunciation")
     print(f"\n  Other languages: use --lang with a reference audio for voice cloning")
@@ -510,7 +514,7 @@ def _print_qwen_cpp_info():
     print("    qwen_cpp_model_dir: /path/to/qwen3-tts.cpp/models")
     print("    qwen_cpp_ref_audio: /path/to/reference.wav")
     print()
-    print("Supported languages: en, ru, zh, ja, ko, de, fr, es")
+    print("Supported languages: en, ru, zh, ja, ko, de, fr, es, it, pt")
     print("  Pass --lang <code> to select (default: en)")
     print("  Without --lang or for unsupported languages, output uses English.")
     print("  Voice cloning via ref_audio works for any language.")
