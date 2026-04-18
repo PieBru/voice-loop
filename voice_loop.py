@@ -1666,7 +1666,7 @@ def main():
             {
                 "role": "user",
                 "content": (
-                    "Greet the user as Voice Loop in one short sentence. "
+                    "Greet the user as Alfred in one short sentence. "
                     "If my name is in memory, use it and ask how you can help. "
                     f"Otherwise, ask for my name.{_greeting_lang}"
                 ),
