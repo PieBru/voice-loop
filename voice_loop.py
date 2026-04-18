@@ -1618,6 +1618,8 @@ def main():
 
                 response = " ".join(response_parts)
                 print()
+            if not response:
+                print("  [empty LLM response]", flush=True)
             history.append({"user": heard, "assistant": response})
             if len(history) > MAX_HISTORY:
                 history.pop(0)
