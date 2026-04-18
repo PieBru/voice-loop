@@ -562,6 +562,72 @@ def _print_voxcpm_info():
     print("    voxcpm_device: cuda                     # cuda, cpu, mps, or auto")
 
 
+def _load_openai_tts_config():
+    cfg = {
+        "endpoint": "http://localhost:8880",
+        "model": "qwen3-tts",
+        "voice": "Chelsie",
+        "stream": False,
+        "sample_rate": 24000,
+        "timeout": 30,
+    }
+    config_path = _DIR / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(config_path.read_text())
+            if data and "tts" in data:
+                tts = data["tts"]
+                cfg["endpoint"] = tts.get("openai_endpoint", cfg["endpoint"])
+                cfg["model"] = tts.get("openai_model", cfg["model"])
+                cfg["voice"] = tts.get("openai_voice", cfg["voice"])
+                cfg["stream"] = tts.get("openai_stream", cfg["stream"])
+                cfg["sample_rate"] = tts.get("openai_sample_rate", cfg["sample_rate"])
+                cfg["timeout"] = tts.get("openai_timeout", cfg["timeout"])
+        except Exception:
+            pass
+    return cfg
+
+
+def _normalize_openai_endpoint(url):
+    url = url.rstrip("/")
+    if url.endswith("/v1/audio/speech"):
+        return url
+    if url.endswith("/v1"):
+        return url + "/audio/speech"
+    return url + "/v1/audio/speech"
+
+
+def _print_openai_tts_info():
+    cfg = _load_openai_tts_config()
+    print("OpenAI-Compatible TTS Endpoint (--tts openai)")
+    print("=" * 50)
+    print(f"  Endpoint:    {cfg['endpoint']}")
+    print(f"  Model:       {cfg['model']}")
+    print(f"  Voice:       {cfg['voice']}")
+    print(f"  Streaming:   {'enabled' if cfg['stream'] else 'disabled'}")
+    print(f"  Sample rate: {cfg['sample_rate']} Hz (streaming PCM only)")
+    print(f"  Timeout:     {cfg['timeout']}s")
+    print()
+    print("CLI overrides:")
+    print("  --tts-openai-endpoint URL   --tts-openai-model NAME")
+    print("  --tts-openai-stream         --tts-openai-sr RATE")
+    print("  --voice NAME")
+    print()
+    print("Compatible servers:")
+    print("  https://github.com/groxaxo/Qwen3-TTS-Openai-Fastapi")
+    print()
+    print("config.yaml example:")
+    print("  tts:")
+    print("    openai_endpoint: http://localhost:8880")
+    print("    openai_model: qwen3-tts")
+    print("    openai_voice: Chelsie")
+    print("    openai_stream: false")
+    print("    openai_sample_rate: 24000")
+    print("    openai_timeout: 30")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Voice Loop — a minimal on-device voice agent"
@@ -644,8 +710,30 @@ def main():
     ap.add_argument(
         "--tts",
         default="kokoro",
-        choices=["kokoro", "qwen", "qwen-cpp", "voxcpm"],
+        choices=["kokoro", "qwen", "qwen-cpp", "voxcpm", "openai"],
         help="TTS backend (default: kokoro)",
+    )
+    ap.add_argument(
+        "--tts-openai-endpoint",
+        default=None,
+        help="OpenAI TTS server URL (default: http://localhost:8880)",
+    )
+    ap.add_argument(
+        "--tts-openai-model",
+        default=None,
+        help="Model name for OpenAI TTS server (default: qwen3-tts)",
+    )
+    ap.add_argument(
+        "--tts-openai-stream",
+        action="store_true",
+        default=None,
+        help="Enable streaming PCM mode for OpenAI TTS",
+    )
+    ap.add_argument(
+        "--tts-openai-sr",
+        type=int,
+        default=None,
+        help="Sample rate for streaming PCM (default: 24000)",
     )
     ap.add_argument(
         "--handler",
@@ -680,6 +768,8 @@ def main():
             _print_qwen_cpp_info()
         elif args.tts == "voxcpm":
             _print_voxcpm_info()
+        elif args.tts == "openai":
+            _print_openai_tts_info()
         else:
             _print_language_table()
         sys.exit(0)
@@ -775,6 +865,29 @@ def main():
         except ImportError:
             print("Error: voxcpm not installed.\nRun: uv add voxcpm\nThen try again.")
             sys.exit(1)
+
+    _openai_tts_active = args.tts == "openai" and args.tts_enabled
+    _openai_tts_cfg = None
+    if _openai_tts_active:
+        _openai_tts_cfg = _load_openai_tts_config()
+        if args.tts_openai_endpoint:
+            _openai_tts_cfg["endpoint"] = args.tts_openai_endpoint
+        if args.tts_openai_model:
+            _openai_tts_cfg["model"] = args.tts_openai_model
+        if args.voice:
+            _openai_tts_cfg["voice"] = args.voice
+        if args.tts_openai_stream:
+            _openai_tts_cfg["stream"] = True
+        if args.tts_openai_sr is not None:
+            _openai_tts_cfg["sample_rate"] = args.tts_openai_sr
+        _openai_tts_cfg["endpoint"] = _normalize_openai_endpoint(
+            _openai_tts_cfg["endpoint"]
+        )
+        print(
+            f"  OpenAI TTS: {_openai_tts_cfg['endpoint']} "
+            f"(model={_openai_tts_cfg['model']}, voice={_openai_tts_cfg['voice']})",
+            flush=True,
+        )
 
     print("Loading Silero VAD...", flush=True)
     from silero_vad import load_silero_vad
@@ -1291,6 +1404,38 @@ def main():
                 sd.wait()
             except Exception as e:
                 print(f"  [voxcpm error: {e}]", file=sys.stderr)
+        elif _openai_tts_active:
+            import io as _io
+
+            try:
+                sentences = _split_sentences(text) or [text]
+                for sent in sentences:
+                    payload = json.dumps(
+                        {
+                            "model": _openai_tts_cfg["model"],
+                            "voice": _openai_tts_cfg["voice"],
+                            "input": sent,
+                            "response_format": "wav",
+                            "speed": 1.0,
+                        }
+                    ).encode()
+                    req = urllib.request.Request(
+                        _openai_tts_cfg["endpoint"],
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    timeout = _openai_tts_cfg.get("timeout", 30)
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:
+                        wav_bytes = resp.read()
+                    import soundfile as _sf
+
+                    samples, sr = _sf.read(_io.BytesIO(wav_bytes))
+                    sd.play(samples, sr)
+                    sd.wait()
+            except urllib.error.URLError as e:
+                print(f"  [openai-tts error: {e}]", file=sys.stderr)
+            except Exception as e:
+                print(f"  [openai-tts error: {e}]", file=sys.stderr)
         drain_audio_q()
         vad.reset_states()
 
@@ -1579,7 +1724,12 @@ def main():
                 print(f"\n> {response}\n", flush=True)
                 if kokoro and response:
                     play_tts_stream(response)
-                elif qwen_tts_model or _qwen_cpp_bin or voxcpm_model:
+                elif (
+                    qwen_tts_model
+                    or _qwen_cpp_bin
+                    or voxcpm_model
+                    or _openai_tts_active
+                ):
                     speak_tts(response)
                 elif chime_sound is not None:
                     _wait_for_chime_gap()
@@ -1607,7 +1757,10 @@ def main():
                     for _ in _collecting(stream_sentences(messages)):
                         pass
                     if response_parts and (
-                        qwen_tts_model or _qwen_cpp_bin or voxcpm_model
+                        qwen_tts_model
+                        or _qwen_cpp_bin
+                        or voxcpm_model
+                        or _openai_tts_active
                     ):
                         speak_tts(" ".join(response_parts))
                     elif chime_sound is not None:
@@ -1675,7 +1828,7 @@ def main():
         max_tokens=512,
     )
     print(f"> {greeting}\n", flush=True)
-    if kokoro or qwen_tts_model or _qwen_cpp_bin or voxcpm_model:
+    if kokoro or qwen_tts_model or _qwen_cpp_bin or voxcpm_model or _openai_tts_active:
         speak_tts(greeting)
 
     with sd.InputStream(
