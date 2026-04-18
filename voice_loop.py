@@ -1713,6 +1713,8 @@ def main():
                     buf.clear()
                     speaking, silent_chunks = False, 0
                     vad.reset_states()
+                    drain_audio_q()
+                    _time.sleep(0.3)
 
         except KeyboardInterrupt:
             print("\nBye!")
