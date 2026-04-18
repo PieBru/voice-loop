@@ -260,6 +260,11 @@ def _patch_qwen_tts_compat():
         Qwen3TTSTalkerConfig.__init__ = _patched_init
         Qwen3TTSTalkerConfig._pad_token_id_patched = True
 
+    from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+    if "default" not in ROPE_INIT_FUNCTIONS and "linear" in ROPE_INIT_FUNCTIONS:
+        ROPE_INIT_FUNCTIONS["default"] = ROPE_INIT_FUNCTIONS["linear"]
+
 
 _HANDLER_DEFAULTS = {
     "llm": {"description": "Direct LLM API call (default)"},
