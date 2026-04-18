@@ -353,54 +353,90 @@ def check_linux_deps():
 def _print_language_table():
     import tempfile
 
+    print("=== Kokoro TTS (default, CPU ONNX) ===")
+    print()
     cache_dir = os.path.join(tempfile.gettempdir(), "kokoro_tts")
     voices_file = os.path.join(cache_dir, "voices-v1.0.bin")
     if not os.path.exists(voices_file):
-        print("Kokoro voices not downloaded yet. Run voice_loop.py once first.")
-        return
-    import numpy as np
+        print("  Kokoro voices not downloaded yet. Run voice_loop.py once first.")
+    else:
+        import numpy as np
 
-    voices = sorted(np.load(voices_file).keys())
-    prefix_lang = {
-        "a": ("en-us", "English (US)", None),
-        "b": ("en-gb", "English (UK)", None),
-        "e": ("es", "Spanish", None),
-        "f": ("fr-fr", "French", None),
-        "h": ("hi", "Hindi", None),
-        "i": ("it", "Italian", None),
-        "j": ("ja", "Japanese", None),
-        "p": ("pt-br", "Portuguese", None),
-        "z": ("cmn", "Chinese", "zh"),
-    }
-    _tts_to_stt_code = {"cmn": "zh"}
-    by_prefix = {}
-    for v in voices:
-        p = v[0]
-        by_prefix.setdefault(p, []).append(v)
-    print(f"{'Lang':<12} {'Code':<6} {'STT':<10} Voices")
-    print("-" * 70)
-    for prefix in sorted(by_prefix.keys()):
-        entry = prefix_lang.get(prefix, ("??", f"Unknown ({prefix})", None))
-        code, name = entry[0], entry[1]
-        stt_code = _tts_to_stt_code.get(code, code.split("-")[0])
-        stt = "moonshine" if stt_code in MOONSHINE_LANGS else "whisper"
-        voice_list = ", ".join(by_prefix[prefix])
-        print(f"{name:<12} {code:<6} {stt:<10} {voice_list}")
-    print(f"\nTotal: {len(voices)} voices across {len(by_prefix)} languages")
-    print("faster-whisper supports 99+ languages for transcription")
+        voices = sorted(np.load(voices_file).keys())
+        prefix_lang = {
+            "a": ("en-us", "English (US)"),
+            "b": ("en-gb", "English (UK)"),
+            "e": ("es", "Spanish"),
+            "f": ("fr-fr", "French"),
+            "h": ("hi", "Hindi"),
+            "i": ("it", "Italian"),
+            "j": ("ja", "Japanese"),
+            "p": ("pt-br", "Portuguese"),
+            "z": ("cmn", "Chinese"),
+        }
+        by_prefix = {}
+        for v in voices:
+            p = v[0]
+            by_prefix.setdefault(p, []).append(v)
+        print(f"  {'Lang':<16} {'Code':<6} Voices")
+        print("  " + "-" * 65)
+        for prefix in sorted(by_prefix.keys()):
+            code, name = prefix_lang.get(prefix, ("??", f"Unknown ({prefix})"))
+            voice_list = ", ".join(by_prefix[prefix])
+            print(f"  {name:<16} {code:<6} {voice_list}")
+        print(f"\n  Total: {len(voices)} voices across {len(by_prefix)} languages")
+
+    print()
+    print("=== Qwen3-TTS (--tts qwen, CUDA Linux, 9 speakers) ===")
+    print()
+    _print_qwen_speaker_table()
+
+    print()
+    print("=== QwenTTS C++ (--tts qwen-cpp, CPU/CUDA/Metal) ===")
+    print()
+    print(f"  {'Lang':<16} {'Code':<6} Notes")
+    print("  " + "-" * 55)
+    for code, name in [
+        ("en", "English"),
+        ("ru", "Russian"),
+        ("zh", "Chinese"),
+        ("ja", "Japanese"),
+        ("ko", "Korean"),
+        ("de", "German"),
+        ("fr", "French"),
+        ("es", "Spanish"),
+    ]:
+        print(f"  {name:<16} {code:<6} native pronunciation")
+    print(f"\n  Other languages: use --lang with a reference audio for voice cloning")
+
+    print()
+    print("=== VoxCPM2 (--tts voxcpm, 30 languages) ===")
+    print()
+    print("  ar, zh, da, nl, en, fi, fr, de, el, he, hi, id, it, ja, km,")
+    print("  ko, lo, ms, no, pl, pt, ru, es, sw, sv, tl, th, tr, vi")
+    print("  (+ Chinese dialects)")
+    print("  Install: uv add voxcpm")
+
+    print()
+    print("=== STT Backends ===")
+    print()
+    print(f"  Moonshine:  {', '.join(sorted(MOONSHINE_LANGS))}")
+    print("  Whisper:    99+ languages (faster-whisper)")
+    print("  Auto-selected per language, override with --stt")
 
 
 def _print_qwen_speaker_table():
-    print(f"{'Lang':<12} {'Code':<6} {'Speaker':<12} Language Name")
-    print("-" * 60)
+    print(f"  {'Lang':<14} {'Code':<6} {'Speaker':<12} Language Name")
+    print("  " + "-" * 55)
     for code in sorted(_QWEN_SPEAKER_MAP.keys()):
         info = _QWEN_SPEAKER_MAP[code]
         native = {"en": "English", "zh": "Chinese", "ja": "Japanese", "ko": "Korean"}
         lang_name = native.get(code, f"{info['language']} (via Ryan)")
-        print(f"{lang_name:<12} {code:<6} {info['speaker']:<12} {info['language']}")
-    print(f"\nTotal: {len(_QWEN_SPEAKER_MAP)} language mappings")
-    print("CustomVoice model has 9 built-in speakers")
-    print("Use --voice <SpeakerName> to select a specific speaker")
+        print(f"  {lang_name:<14} {code:<6} {info['speaker']:<12} {info['language']}")
+    print(
+        f"\n  9 speakers: Chelsie, Dylan, Eric, Ono_Anna, Aiden, Ryan, Serena, Sohee, Vivian"
+    )
+    print("  Use --voice <SpeakerName> to select")
 
 
 def _print_handler_table():
