@@ -109,6 +109,12 @@ uv run voice_loop.py --tts qwen-cpp
 
 # List qwen-cpp config and install instructions
 uv run voice_loop.py --list --tts qwen-cpp
+
+# VoxCPM2 TTS (30 languages, voice cloning/design)
+uv run voice_loop.py --tts voxcpm
+
+# List VoxCPM capabilities and config
+uv run voice_loop.py --list --tts voxcpm
 ```
 
 ## ZeroClaw Integration
@@ -250,6 +256,47 @@ tts:
 - **No built-in speakers**: voice cloning from reference audio only. Without reference audio, uses a generic default voice.
 - **0.6B model only**: lower quality than the 1.7B Python backend
 
+## VoxCPM2 Backend (`--tts voxcpm`)
+
+Uses [VoxCPM2](https://github.com/OpenBMB/VoxCPM) by OpenBMB — a tokenizer-free diffusion autoregressive TTS model (2B params, 48kHz output). Supports **30 languages** including native Italian.
+
+### When to use
+
+- You need a language not covered by Kokoro or QwenTTS (e.g., Italian with native voice)
+- You want voice cloning from a reference audio clip
+- You want voice design via text descriptions (e.g., "warm female voice")
+
+### Install
+
+```bash
+uv add voxcpm
+```
+
+First run downloads ~8GB model weights.
+
+### Configure
+
+Add to `config.yaml`:
+
+```yaml
+tts:
+  voxcpm_ref_audio: /path/to/voice.wav   # 5-30s for voice cloning
+  voxcpm_voice_desc: warm female voice    # or describe a voice
+  voxcpm_device: auto                     # cuda, cpu, mps, or auto
+```
+
+When both `ref_audio` and `voice_desc` are set, `ref_audio` takes precedence.
+
+### Supported languages
+
+ar, zh, da, nl, en, fi, fr, de, el, he, hi, id, it, ja, km, ko, lo, ms, no, pl, pt, ru, es, sw, sv, tl, th, tr, vi (+ Chinese dialects)
+
+### Limitations
+
+- **No streaming**: full synthesis then playback
+- **Heavy model**: ~8GB download, requires significant RAM/VRAM
+- **Requires torch>=2.5.0**
+
 ## Recommended Kokoro voices
 
 Only the higher-quality voices are listed here:
@@ -358,6 +405,13 @@ Changes on top of the upstream [TrelisResearch/voice-loop](https://github.com/Tr
 - **`--list-handlers` flag** — shows all available response handlers with descriptions.
 - **`--offline` flag** — sets `HF_HUB_OFFLINE=1` for fully offline operation after first model download.
 - **`config.yaml` handlers section** — configure endpoint URL, model name, token, and timeout per handler.
+
+### QwenTTS and VoxCPM backends (`005`–`007` branches)
+
+- **`--tts` flag** — selects TTS backend: `kokoro` (default), `qwen` (CUDA Linux), `qwen-cpp` (all platforms), `voxcpm` (all platforms).
+- **Qwen3-TTS** — 1.7B neural TTS with 9 built-in speakers, 10 languages. Requires CUDA GPU with ≥8GB VRAM. `--list --tts qwen` shows speakers.
+- **QwenTTS C++** — lightweight 0.6B model via `qwen3-tts-cli` subprocess. Voice cloning from reference audio. Runs on CPU/CUDA/Metal.
+- **VoxCPM2** — 2B diffusion TTS with 30 languages, voice cloning (5-30s reference audio), and voice design (text descriptions). Install: `uv add voxcpm`.
 
 ## Raspberry Pi
 
