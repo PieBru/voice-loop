@@ -709,11 +709,14 @@ def main():
             sys.exit(1)
         print(f"  QwenTTS C++ backend: {_qwen_cpp_bin}", flush=True)
         print(f"  Model dir: {model_dir}", flush=True)
-        ref = _qwen_cpp_cfg.get("ref_audio")
-        if ref:
-            print(f"  Reference audio: {ref}", flush=True)
-        else:
-            print("  No reference audio — using default voice", flush=True)
+        _QWEN_CPP_LANGS = {"en", "ru", "zh", "ja", "ko", "de", "fr", "es"}
+        if args.lang not in _QWEN_CPP_LANGS:
+            print(
+                f"  Warning: qwen-cpp does not support '{args.lang}'. "
+                f"Supported: {', '.join(sorted(_QWEN_CPP_LANGS))}. "
+                "Output will use English pronunciation.",
+                flush=True,
+            )
 
     _voxcpm_cfg = _load_voxcpm_config() if args.tts == "voxcpm" else None
     voxcpm_model = None
@@ -1183,6 +1186,7 @@ def main():
             import subprocess as _sp
             import soundfile as _sf
 
+            _QWEN_CPP_LANGS = {"en", "ru", "zh", "ja", "ko", "de", "fr", "es"}
             try:
                 tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
                 tmp_path = tmp.name
@@ -1196,6 +1200,8 @@ def main():
                     "-o",
                     tmp_path,
                 ]
+                if args.lang in _QWEN_CPP_LANGS:
+                    cmd.extend(["-l", args.lang])
                 ref = _qwen_cpp_cfg.get("ref_audio")
                 if ref:
                     cmd.extend(["-r", ref])
