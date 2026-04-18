@@ -238,56 +238,6 @@ _QWEN_SPEAKER_MAP = {
 _QWEN_TTS_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 
 
-def _patch_qwen_tts_compat():
-    import transformers.utils.generic as _g
-
-    _orig = _g.check_model_inputs
-
-    def _wrapper(func=None):
-        return _orig(func) if func is not None else _orig
-
-    _g.check_model_inputs = _wrapper
-
-    from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSTalkerConfig
-
-    if not hasattr(Qwen3TTSTalkerConfig, "_pad_token_id_patched"):
-        _orig_init = Qwen3TTSTalkerConfig.__init__
-
-        def _patched_init(self, **kwargs):
-            kwargs.setdefault("pad_token_id", None)
-            _orig_init(self, **kwargs)
-
-        Qwen3TTSTalkerConfig.__init__ = _patched_init
-        Qwen3TTSTalkerConfig._pad_token_id_patched = True
-
-    from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
-
-    if "default" not in ROPE_INIT_FUNCTIONS:
-
-        def _compute_default_rope_parameters(
-            config=None, device=None, seq_len=None, layer_type=None
-        ):
-            import torch
-
-            if config is not None:
-                head_dim = getattr(config, "head_dim", None)
-                if head_dim is None:
-                    head_dim = config.hidden_size // config.num_attention_heads
-                base = getattr(config, "rope_theta", 10000.0)
-                dim = head_dim
-                inv_freq = 1.0 / (
-                    base
-                    ** (
-                        torch.arange(0, dim, 2, dtype=torch.int64).float().to(device)
-                        / dim
-                    )
-                )
-                return inv_freq, 1.0
-            return None, 1.0
-
-        ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_parameters
-
-
 _HANDLER_DEFAULTS = {
     "llm": {"description": "Direct LLM API call (default)"},
     "agentic": {
@@ -915,82 +865,7 @@ def main():
         kokoro = Kokoro(model_file, voices_file)
     elif args.tts == "qwen" and args.tts_enabled:
         print("Loading QwenTTS...", flush=True)
-        _patch_qwen_tts_compat()
         from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
-        from qwen_tts.core.models import Qwen3TTSConfig
-        from qwen_tts.core import (
-            Qwen3TTSTokenizerV1Config,
-            Qwen3TTSTokenizerV1Model,
-            Qwen3TTSTokenizerV2Config,
-            Qwen3TTSTokenizerV2Model,
-        )
-        from transformers import (
-            AutoConfig,
-            AutoModel,
-            AutoProcessor,
-            SequenceFeatureExtractor,
-        )
-        from qwen_tts.core.models import (
-            Qwen3TTSForConditionalGeneration,
-            Qwen3TTSProcessor as _Qwen3TTSProcessor,
-        )
-
-        AutoConfig.register("qwen3_tts", Qwen3TTSConfig)
-        AutoModel.register(Qwen3TTSConfig, Qwen3TTSForConditionalGeneration)
-        AutoProcessor.register(Qwen3TTSConfig, _Qwen3TTSProcessor)
-
-        _orig_tokenizer_from_pretrained = Qwen3TTSTokenizer.from_pretrained
-
-        @classmethod
-        def _patched_tokenizer_from_pretrained(cls, pretrained, **kw):
-            inst = cls.__new__(cls)
-            AutoConfig.register(
-                "qwen3_tts_tokenizer_25hz",
-                Qwen3TTSTokenizerV1Config,
-            )
-            AutoModel.register(Qwen3TTSTokenizerV1Config, Qwen3TTSTokenizerV1Model)
-            AutoConfig.register(
-                "qwen3_tts_tokenizer_12hz",
-                Qwen3TTSTokenizerV2Config,
-            )
-            AutoModel.register(Qwen3TTSTokenizerV2Config, Qwen3TTSTokenizerV2Model)
-
-            class _FE(SequenceFeatureExtractor):
-                model_input_names = ["input_values", "padding_mask"]
-
-                def __init__(self, sr=24000, **_kw):
-                    super().__init__(
-                        feature_size=1, sampling_rate=sr, padding_value=0.0
-                    )
-
-                def __call__(self, raw_audio, sampling_rate=None, **_kw):
-                    if isinstance(raw_audio, list) and len(raw_audio) == 1:
-                        raw_audio = raw_audio[0]
-                    if isinstance(raw_audio, np.ndarray):
-                        raw_audio = [raw_audio]
-                    tensors = [torch.from_numpy(a).float() for a in raw_audio]
-                    lengths = [len(t) for t in tensors]
-                    padded = torch.nn.utils.rnn.pad_sequence(
-                        tensors, batch_first=True, padding_value=0.0
-                    )
-                    max_len = padded.shape[1]
-                    mask = torch.zeros(len(tensors), max_len)
-                    for i, l in enumerate(lengths):
-                        mask[i, :l] = 1.0
-                    return {
-                        "input_values": padded.unsqueeze(1),
-                        "padding_mask": mask.unsqueeze(1),
-                    }
-
-            inst.feature_extractor = _FE()
-            inst.model = AutoModel.from_pretrained(pretrained, **kw)
-            inst.config = inst.model.config
-            inst.device = getattr(
-                inst.model, "device", next(inst.model.parameters()).device
-            )
-            return inst
-
-        Qwen3TTSTokenizer.from_pretrained = _patched_tokenizer_from_pretrained
 
         print(f"  Loading {_QWEN_TTS_MODEL_ID} (~3.4GB on first run)...", flush=True)
         qwen_tts_tokenizer = Qwen3TTSTokenizer.from_pretrained(_QWEN_TTS_MODEL_ID)
