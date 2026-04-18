@@ -1,6 +1,6 @@
 # Voice Loop
 
-> **WARNING**: This fork should be considered as **NOT WORKING**, as it has been useful to experiment new features without extensive testing. Also, this fork should be considered **DEPRECATED** after it will have for at least one month one or more commits behind the original project.
+> **WARNING**: This fork should be considered as **NOT WORKING**, as it has been useful to experiment new features, but without extensive testing. Also, this fork should be considered **DEPRECATED** after it will have one or more commits behind the original project for at least a couple of months.
 
 A minimal on-device voice agent loop. Runs entirely on macOS (Apple Silicon) and Linux (NVIDIA CUDA).
 
@@ -240,6 +240,8 @@ uv venv .venv && source .venv/bin/activate
 uv pip install huggingface_hub gguf torch safetensors numpy tqdm
 python scripts/setup_pipeline_models.py
 ```
+
+Or download pre-converted models from [endo5501/qwen3-tts.cpp](https://huggingface.co/endo5501/qwen3-tts.cpp).
 
 ### Configure
 

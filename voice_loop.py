@@ -236,6 +236,7 @@ _QWEN_SPEAKER_MAP = {
 }
 
 _QWEN_TTS_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+_QWEN_CPP_LANGS = frozenset({"en", "ru", "zh", "ja", "ko", "de", "fr", "es"})
 
 
 _HANDLER_DEFAULTS = {
@@ -462,6 +463,9 @@ def _print_qwen_cpp_info():
     print("  uv venv .venv && source .venv/bin/activate")
     print("  uv pip install huggingface_hub gguf torch safetensors numpy tqdm")
     print("  python scripts/setup_pipeline_models.py")
+    print()
+    print("  Or download pre-converted models from:")
+    print("    https://huggingface.co/endo5501/qwen3-tts.cpp")
     print("  # Add to PATH or set tts.qwen_cpp_bin in config.yaml")
     print()
     print("config.yaml example:")
@@ -469,6 +473,11 @@ def _print_qwen_cpp_info():
     print("    qwen_cpp_bin: /path/to/qwen3-tts-cli")
     print("    qwen_cpp_model_dir: /path/to/qwen3-tts.cpp/models")
     print("    qwen_cpp_ref_audio: /path/to/reference.wav")
+    print()
+    print("Supported languages: en, ru, zh, ja, ko, de, fr, es")
+    print("  Pass --lang <code> to select (default: en)")
+    print("  Without --lang or for unsupported languages, output uses English.")
+    print("  Voice cloning via ref_audio works for any language.")
 
 
 def _load_voxcpm_config():
@@ -709,7 +718,6 @@ def main():
             sys.exit(1)
         print(f"  QwenTTS C++ backend: {_qwen_cpp_bin}", flush=True)
         print(f"  Model dir: {model_dir}", flush=True)
-        _QWEN_CPP_LANGS = {"en", "ru", "zh", "ja", "ko", "de", "fr", "es"}
         if args.lang not in _QWEN_CPP_LANGS:
             print(
                 f"  Warning: qwen-cpp does not support '{args.lang}'. "
@@ -1166,6 +1174,7 @@ def main():
     def speak_tts(text):
         if not text or not text.strip():
             return
+        drain_audio_q()
         if kokoro:
             samples, sr = kokoro.create(
                 text, voice=args.voice, speed=1.0, lang=_lang_cfg["tts_lang"]
@@ -1186,7 +1195,6 @@ def main():
             import subprocess as _sp
             import soundfile as _sf
 
-            _QWEN_CPP_LANGS = {"en", "ru", "zh", "ja", "ko", "de", "fr", "es"}
             try:
                 tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
                 tmp_path = tmp.name
@@ -1245,6 +1253,8 @@ def main():
                 sd.wait()
             except Exception as e:
                 print(f"  [voxcpm error: {e}]", file=sys.stderr)
+        drain_audio_q()
+        vad.reset_states()
 
     _mem_path = _DIR / "MEMORY.md"
 
