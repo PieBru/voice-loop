@@ -248,6 +248,18 @@ def _patch_qwen_tts_compat():
 
     _g.check_model_inputs = _wrapper
 
+    from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSTalkerConfig
+
+    if not hasattr(Qwen3TTSTalkerConfig, "_pad_token_id_patched"):
+        _orig_init = Qwen3TTSTalkerConfig.__init__
+
+        def _patched_init(self, **kwargs):
+            kwargs.setdefault("pad_token_id", None)
+            _orig_init(self, **kwargs)
+
+        Qwen3TTSTalkerConfig.__init__ = _patched_init
+        Qwen3TTSTalkerConfig._pad_token_id_patched = True
+
 
 _HANDLER_DEFAULTS = {
     "llm": {"description": "Direct LLM API call (default)"},
